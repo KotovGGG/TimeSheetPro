@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include domain="database" path="timesheet_pro_database"/>
+    <include domain="database" path="timesheet_pro_database-shm"/>
+    <include domain="database" path="timesheet_pro_database-wal"/>
+    <include domain="sharedpref" path="."/>
+</full-backup-content>

@@ -1,0 +1,8 @@
+{
+  "name": "TimeSheetPro",
+  "description": "Рабочий табель учета времени и расчета заработка для фрилансеров и подрядчиков.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
