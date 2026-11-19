@@ -1,5 +1,7 @@
 package com.example.ui.theme
 
+import com.example.R
+import androidx.compose.ui.res.stringResource
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -24,28 +26,28 @@ fun ComponentCatalog() {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(AppSpacing.page),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
             Text("TimeSheetPro", style = MaterialTheme.typography.headlineMedium)
-            AppSectionTitle("Время и расчёты")
+            AppSectionTitle(stringResource(R.string.copy_time_and_calculations))
             TimerDial(4523, MaterialTheme.colorScheme.primary, isRunning = true, dialSize = 280.dp)
             Card {
                 Column(Modifier.padding(AppSpacing.lg)) {
-                    Text("Разработка приложения", style = MaterialTheme.typography.titleMedium)
-                    Text("12 450,00 ₽", style = LedgerStyles.MonospaceNumberMedium)
+                    Text(stringResource(R.string.copy_app_development), style = MaterialTheme.typography.titleMedium)
+                    Text("12 450,00 ₽", style = LedgerStyles.NumberMedium)
                 }
             }
             AppButton(onClick = {}, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                 Spacer(Modifier.width(AppSpacing.sm))
-                Text("Продолжить")
+                Text(stringResource(R.string.copy_resume))
             }
             Column(Modifier.testTag("catalog_actions"), verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
-                AppSectionTitle("Иерархия действий")
+                AppSectionTitle(stringResource(R.string.copy_action_hierarchy))
                 for ((variant, label) in listOf(
-                    AppAction.Primary to "Сохранить запись",
-                    AppAction.Tonal to "Поделиться",
-                    AppAction.Secondary to "Добавить вручную",
-                    AppAction.Quiet to "Отмена",
-                    AppAction.Destructive to "Удалить запись",
-                    AppAction.DestructiveQuiet to "Удалить заказчика",
+                    AppAction.Primary to stringResource(R.string.copy_save_record),
+                    AppAction.Tonal to stringResource(R.string.copy_share),
+                    AppAction.Secondary to stringResource(R.string.copy_add_manually),
+                    AppAction.Quiet to stringResource(R.string.copy_cancel),
+                    AppAction.Destructive to stringResource(R.string.copy_delete_record),
+                    AppAction.DestructiveQuiet to stringResource(R.string.copy_delete_client),
                 )) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                         AppButton(onClick = {}, variant = variant) { Text(label) }
@@ -54,29 +56,29 @@ fun ComponentCatalog() {
                 }
             }
             Column(Modifier.testTag("catalog_fields"), verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
-                AppSectionTitle("Поля и выбор")
-                OutlinedTextField(shape = MaterialTheme.shapes.medium, value = text, onValueChange = { text = it }, label = { Text("Комментарий") })
+                AppSectionTitle(stringResource(R.string.copy_fields_and_selection))
+                OutlinedTextField(shape = MaterialTheme.shapes.medium, value = text, onValueChange = { text = it }, label = { Text(stringResource(R.string.copy_comment)) })
                 OutlinedTextField(shape = MaterialTheme.shapes.medium, value = "", onValueChange = {}, isError = true,
-                    label = { Text("Ставка") }, supportingText = { Text("Введите сумму") })
-                FilterChip(selected = selected, onClick = { selected = !selected }, label = { Text("Этот месяц") })
+                    label = { Text(stringResource(R.string.copy_rate)) }, supportingText = { Text(stringResource(R.string.copy_enter_an_amount)) })
+                FilterChip(selected = selected, onClick = { selected = !selected }, label = { Text(stringResource(R.string.copy_this_month)) })
                 AppCheckboxRow(checked = selected, onCheckedChange = { selected = it }) {
-                    Text("Включить комментарии")
+                    Text(stringResource(R.string.copy_include_comments))
                 }
                 Row(Modifier.fillMaxWidth().heightIn(min = AppSize.touchTarget)
                     .toggleable(selected, role = Role.Switch, onValueChange = { selected = it }),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Switch(checked = selected, onCheckedChange = null)
                     Spacer(Modifier.width(AppSpacing.md))
-                    Text("Выбранное состояние")
+                    Text(stringResource(R.string.copy_selected_state))
                 }
-                AppSettingsRow("Тема", "Как на устройстве", onClick = {})
+                AppSettingsRow(stringResource(R.string.copy_theme), stringResource(R.string.copy_follow_device), onClick = {})
             }
-            AppLedgerSummary("Итого за период", "124,50 ч", "9 876 543,21 ₽")
+            AppLedgerSummary(stringResource(R.string.copy_period_total), stringResource(R.string.copy_text_124_50_hr), "9 876 543,21 ₽")
             Column(Modifier.testTag("catalog_statuses"), verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
-                AppSectionTitle("Статусы")
-                AppStatusLabel("Оплачено", LocalStatusPalette.current.paid)
-                AppStatusLabel("Счёт выставлен", LocalStatusPalette.current.invoiced)
-                AppStatusLabel("Не оплачено", LocalStatusPalette.current.unpaid)
+                AppSectionTitle(stringResource(R.string.copy_statuses))
+                AppStatusLabel(stringResource(R.string.copy_paid_2), LocalStatusPalette.current.paid)
+                AppStatusLabel(stringResource(R.string.copy_invoiced), LocalStatusPalette.current.invoiced)
+                AppStatusLabel(stringResource(R.string.copy_unpaid_2), LocalStatusPalette.current.unpaid)
             }
         }
     }

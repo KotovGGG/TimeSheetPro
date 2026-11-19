@@ -11,6 +11,10 @@ Android-приложение для учёта рабочего времени, 
 
 Предварительный APK: `app/build/outputs/apk/debug/app-debug.apk`, пакет `com.example.preview`. Его данные отделены от рабочего приложения.
 
+## Отдельная установка на телефон
+
+Если Android отклоняет обновление из-за несовпадения подписей, запустите `gradlew.bat :app:assembleStandalone` с настроенными `JAVA_HOME` и `ANDROID_HOME`. Готовый APK находится в `app/build/outputs/apk/standalone/app-standalone.apk`. Он устанавливается как `com.example.standalone` со своей базой данных. Записи и настройки из JSON-копии можно загрузить через «Настройки → Восстановить из файла».
+
 ## Документация
 
 - [Дизайн-система](docs/DESIGN_SYSTEM.md)

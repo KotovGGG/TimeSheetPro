@@ -18,6 +18,7 @@ class TimeSheetApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        initializeAppStrings(this)
         _container = AppDataContainer(this)
         com.example.ui.screens.timer.TimerStateManager.initialize(this)
         if (!BuildConfig.DEBUG) com.example.utils.AutoBackupManager.checkAndRestoreOnFirstRun(this)

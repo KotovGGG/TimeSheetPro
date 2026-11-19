@@ -15,7 +15,7 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(application = TimeSheetApp::class, qualifiers = RobolectricDeviceQualifiers.Pixel8, sdk = [36])
+@Config(application = TimeSheetApp::class, qualifiers = "ru-rRU-" + RobolectricDeviceQualifiers.Pixel8, sdk = [36])
 class GreetingScreenshotTest {
 
   @get:Rule val composeTestRule = createComposeRule()

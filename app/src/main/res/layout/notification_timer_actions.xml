@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal">
+
+    <ImageButton
+        android:id="@+id/btn_play_pause"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@drawable/bg_notification_button_primary"
+        android:contentDescription="@string/timer_pause_resume"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_pause"
+        android:tint="@color/widget_button_text" />
+
+    <ImageButton
+        android:id="@+id/btn_stop"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="6dp"
+        android:background="@drawable/bg_notification_button_secondary"
+        android:contentDescription="@string/timer_save_session"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_save"
+        android:tint="@color/widget_secondary_button_text" />
+</LinearLayout>

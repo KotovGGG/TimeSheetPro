@@ -4,6 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import android.content.Context
 import com.example.data.local.entity.AppSettings
+import com.example.data.local.entity.BillingRate
+import com.example.data.local.entity.billingRate
+import com.example.data.local.entity.currencyTotals
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import com.example.data.local.entity.Client
 import com.example.data.local.entity.Report
 import com.example.data.local.entity.ReportStatus
@@ -21,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -37,42 +43,14 @@ class RecordsViewModel(
 
     val allEntriesForReports = timeEntryRepository.getAllTimeEntries()
 
+    suspend fun findEntry(id: Long): TimeEntry? = timeEntryRepository.getTimeEntryById(id).first()
+
     val reportsState: StateFlow<List<Report>> = reportRepository.getAllReports()
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
-
-    init {
-        viewModelScope.launch {
-            combine(
-                timeEntryRepository.getAllTimeEntries(),
-                clientRepository.getAllClients(),
-                settingsRepository.getSettingsFlow()
-            ) { entries, clients, settings ->
-                Triple(entries, clients, settings ?: AppSettings())
-            }.collect { (entries, clients, settings) ->
-                val clientMap = clients.associateBy { it.id }
-                for (entry in entries) {
-                    if (entry.durationSeconds > 0 && (entry.appliedRate <= 0.0 || entry.amount <= 0.0)) {
-                        val client = clientMap[entry.clientId]
-                        val effectiveRate = client?.defaultHourlyRate?.takeIf { it > 0.0 } ?: settings.globalHourlyRate
-                        if (effectiveRate > 0.0) {
-                            val rawAmount = (entry.durationSeconds.toDouble() / 3600.0) * effectiveRate
-                            val roundedAmount = settings.roundAmount(rawAmount)
-                            val updated = entry.copy(
-                                appliedRate = effectiveRate,
-                                amount = roundedAmount,
-                                updatedAt = System.currentTimeMillis()
-                            )
-                            timeEntryRepository.updateTimeEntry(updated)
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
@@ -266,7 +244,7 @@ class RecordsViewModel(
     ) {
         viewModelScope.launch {
             val rawSeconds = maxOf(0L, (endTime - startTime) / 1000)
-            
+
             // Apply rounding according to settings
             val roundingMinutes = settingsState.value.timeRoundingMinutes
             val durationSeconds = if (roundingMinutes > 0) {
@@ -279,7 +257,8 @@ class RecordsViewModel(
             }
 
             val client = clientsState.value.find { it.id == clientId }
-            val effectiveRate = if (rate > 0.0) rate else (client?.defaultHourlyRate?.takeIf { it > 0.0 } ?: settingsState.value.globalHourlyRate)
+            val billing = settingsState.value.billingRate(client, rate)
+            val effectiveRate = billing.amount
 
             val rawAmount = (durationSeconds.toDouble() / 3600.0) * effectiveRate
             val amount = settingsState.value.roundAmount(rawAmount)
@@ -292,6 +271,7 @@ class RecordsViewModel(
                 rawDurationSeconds = rawSeconds,
                 comment = comment,
                 appliedRate = effectiveRate,
+                currencyCode = billing.currencyCode,
                 amount = amount,
                 status = TimeEntryStatus.NOT_PAID
             )
@@ -311,10 +291,13 @@ class RecordsViewModel(
     ) {
         viewModelScope.launch {
             val rawSeconds = maxOf(0L, (endTime - startTime) / 1000)
-            
+
             // Apply rounding according to settings
             val roundingMinutes = settingsState.value.timeRoundingMinutes
-            val durationSeconds = if (roundingMinutes > 0) {
+            val durationUnchanged = rawSeconds / 60 == entry.durationSeconds / 60
+            val durationSeconds = if (durationUnchanged) {
+                entry.durationSeconds
+            } else if (roundingMinutes > 0) {
                 val roundingSeconds = roundingMinutes * 60
                 val intervals = kotlin.math.round(rawSeconds.toDouble() / roundingSeconds).toLong()
                 val finalIntervals = if (rawSeconds > 0 && intervals == 0L) 1L else intervals
@@ -325,24 +308,31 @@ class RecordsViewModel(
 
             // Decide rate
             val client = clientsState.value.find { it.id == clientId }
-            val effectiveRate = if (recalculateWithCurrentClientRate) {
-                currentClientRate?.takeIf { it > 0.0 } ?: (client?.defaultHourlyRate?.takeIf { it > 0.0 } ?: settingsState.value.globalHourlyRate)
+            val billing = if (recalculateWithCurrentClientRate) {
+                settingsState.value.billingRate(client, currentClientRate)
             } else {
-                if (entry.appliedRate > 0.0) entry.appliedRate
-                else (currentClientRate?.takeIf { it > 0.0 } ?: (client?.defaultHourlyRate?.takeIf { it > 0.0 } ?: settingsState.value.globalHourlyRate))
+                BillingRate(entry.appliedRate, entry.currencyCode)
             }
+            val effectiveRate = billing.amount
 
             val rawAmount = (durationSeconds.toDouble() / 3600.0) * effectiveRate
-            val amount = settingsState.value.roundAmount(rawAmount)
+            val amount = if (!recalculateWithCurrentClientRate && durationUnchanged) {
+                entry.amount
+            } else {
+                settingsState.value.roundAmount(rawAmount)
+            }
 
             val updatedEntry = entry.copy(
                 clientId = clientId,
                 startTime = startTime,
-                endTime = endTime,
+                endTime = if (durationUnchanged && entry.endTime != null) {
+                    startTime + (entry.endTime - entry.startTime)
+                } else endTime,
                 durationSeconds = durationSeconds,
-                rawDurationSeconds = rawSeconds,
+                rawDurationSeconds = if (durationUnchanged) entry.rawDurationSeconds else rawSeconds,
                 comment = comment,
                 appliedRate = effectiveRate,
+                currencyCode = billing.currencyCode,
                 amount = amount,
                 status = status,
                 updatedAt = System.currentTimeMillis()
@@ -399,7 +389,7 @@ class RecordsViewModel(
         fileName: String
     ) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val totalAmount = entries.sumOf { it.amount }
+            val totals = entries.currencyTotals()
             val totalDuration = entries.sumOf { it.durationSeconds }
             val entryIds = entries.map { it.id }
             val entryIdsJson = entryIds.joinToString(prefix = "[", postfix = "]")
@@ -416,7 +406,8 @@ class RecordsViewModel(
                 clientNames = clientNames,
                 periodLabel = periodLabel,
                 exportFormat = exportFormat,
-                totalAmount = totalAmount,
+                totalAmount = totals.values.singleOrNull() ?: 0.0,
+                currencyTotalsJson = Json.encodeToString(totals),
                 totalDurationSeconds = totalDuration,
                 entriesCount = entries.size,
                 entryIdsJson = entryIdsJson,

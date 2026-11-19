@@ -1,5 +1,8 @@
 package com.example.utils.export
 
+import com.example.appLocale
+import com.example.R
+import com.example.appText
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -10,6 +13,7 @@ import android.text.TextPaint
 import androidx.compose.ui.graphics.toArgb
 import com.example.data.local.entity.Client
 import com.example.data.local.entity.TimeEntry
+import com.example.data.local.entity.currencyTotals
 import com.example.ui.theme.LightColorScheme
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
@@ -31,7 +35,7 @@ object PdfGenerator {
         val bold = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         val mono = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG)
-        val locale = Locale.getDefault()
+        val locale = appLocale()
         val dateFormat = SimpleDateFormat("dd.MM.yy HH:mm", locale)
         val issuedAt = SimpleDateFormat("yyyy-MM-dd HH:mm", locale).format(Date())
         val clientMap = clients.associateBy { it.id }
@@ -40,7 +44,7 @@ object PdfGenerator {
         val bottom = 794f
         val lineHeight = 14f
         val widths = listOf(82f, 110f, 165f, 60f, 98f)
-        val headers = listOf("Дата", "Заказчик", "Комментарий", "Время", "Сумма")
+        val headers = listOf(appText(R.string.copy_date), appText(R.string.copy_client_2), appText(R.string.copy_comment), appText(R.string.copy_time), appText(R.string.copy_amount))
         var pageNumber = 0
         var page: PdfDocument.Page? = null
         var canvas: Canvas? = null
@@ -67,15 +71,15 @@ object PdfGenerator {
             target.drawColor(colors.surfaceContainerLowest.toArgb())
             font(10f, bold, accent); target.drawText("TimeSheetPro", margin, 42f, paint)
             font(9f, sans, secondaryInk)
-            val pageLabel = "Страница $pageNumber"
+            val pageLabel = appText(R.string.copy_page_1, pageNumber)
             target.drawText(pageLabel, right - paint.measureText(pageLabel), 42f, paint)
-            font(26f, bold); target.drawText("Счёт / Invoice", margin, 80f, paint)
+            font(26f, bold); target.drawText(appText(R.string.copy_invoice), margin, 80f, paint)
             paint.color = accent; paint.strokeWidth = 2f
             target.drawLine(margin, 94f, right, 94f, paint)
             y = 113f
             font(9f, sans, secondaryInk)
             // This summary is bounded; full client names are printed in the table.
-            listOf("Сформирован: $issuedAt", "Заказчики: $selectedClientNames", "Период: $periodLabel").forEach { value ->
+            listOf(appText(R.string.copy_issued_1, issuedAt), appText(R.string.copy_clients_1, selectedClientNames), appText(R.string.copy_period_1, periodLabel)).forEach { value ->
                 val wrapped = lines(value, right - margin)
                 wrapped.take(3).forEachIndexed { index, line ->
                     var visible = line
@@ -101,14 +105,12 @@ object PdfGenerator {
         }
         try {
             startPage(table = true)
-            var totalSum = 0.0
             entries.forEachIndexed { rowIndex, entry ->
                 // Stored monetary values and the existing duration/formatting rules stay intact.
-                totalSum += entry.amount
                 val cells = listOf(dateFormat.format(Date(entry.startTime)),
-                    clientMap[entry.clientId]?.name ?: "Заказчик #${entry.clientId}", entry.comment ?: "—",
-                    String.format(locale, "%dч %02dм", entry.durationSeconds / 3600, (entry.durationSeconds % 3600) / 60),
-                    String.format(locale, "%.2f", entry.amount))
+                    clientMap[entry.clientId]?.name ?: appText(R.string.copy_client_1_2, entry.clientId), entry.comment ?: "—",
+                    String.format(locale, appText(R.string.copy_dh_02dm), entry.durationSeconds / 3600, (entry.durationSeconds % 3600) / 60),
+                    String.format(locale, "%.2f %s", entry.amount, entry.currencyCode))
                 val wrapped = cells.mapIndexed { index, value ->
                     font(9.5f, if (index >= 3) mono else sans); lines(value, widths[index] - 12f)
                 }
@@ -147,19 +149,22 @@ object PdfGenerator {
             paint.color = accent; paint.strokeWidth = 2f
             checkNotNull(canvas).drawLine(margin, y, right, y, paint)
             y += 25f
-            font(12f, bold); checkNotNull(canvas).drawText("Итого к оплате", margin, y, paint)
+            font(12f, bold); checkNotNull(canvas).drawText(appText(R.string.copy_total_due), margin, y, paint)
             y += 30f
-            val total = String.format(locale, "%,.2f %s", totalSum, currencySymbol)
-            font(20f, mono)
-            while (paint.measureText(total) > right - margin && paint.textSize > 12f) paint.textSize -= 1f
-            lines(total, right - margin).forEach { line ->
-                if (y > bottom) { startPage(table = false); font(12f, mono) }
-                checkNotNull(canvas).drawText(line, right - paint.measureText(line), y, paint)
-                y += maxOf(24f, paint.fontSpacing)
+            val totals = entries.currencyTotals().ifEmpty { mapOf(currencySymbol to 0.0) }
+            for ((code, amount) in totals) {
+                val total = String.format(locale, "%,.2f %s", amount, code)
+                font(20f, mono)
+                while (paint.measureText(total) > right - margin && paint.textSize > 12f) paint.textSize -= 1f
+                lines(total, right - margin).forEach { line ->
+                    if (y > bottom) { startPage(table = false); font(12f, mono) }
+                    checkNotNull(canvas).drawText(line, right - paint.measureText(line), y, paint)
+                    y += maxOf(24f, paint.fontSpacing)
+                }
             }
             y += 14f
             font(9f, sans, secondaryInk)
-            lines("Спасибо за сотрудничество! Счёт сформирован в TimeSheetPro.", right - margin).forEach { line ->
+            lines(appText(R.string.copy_thank_you_this_invoice_was_made_with), right - margin).forEach { line ->
                 if (y > bottom) { startPage(table = false); font(9f, sans, secondaryInk) }
                 checkNotNull(canvas).drawText(line, margin, y, paint); y += lineHeight
             }

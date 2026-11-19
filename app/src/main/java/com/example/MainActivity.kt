@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
     enableEdgeToEdge()
     
     if (savedInstanceState == null) {
-      handleWidgetAction(intent)
+      handleTimerAction(intent)
     } else if (intent?.action == "ACTION_WIDGET_FINISH") {
       intent?.action = null
     }
@@ -101,8 +101,8 @@ class MainActivity : ComponentActivity() {
               if (startup == null) {
                 CircularProgressIndicator()
               } else {
-                Text("Не удалось открыть данные", style = MaterialTheme.typography.headlineSmall)
-                Text("База не была пересоздана. Не удаляйте приложение и не очищайте его данные. Для открытия нужна совместимая версия приложения.")
+                Text(appText(R.string.copy_could_not_open_data), style = MaterialTheme.typography.headlineSmall)
+                Text(appText(R.string.copy_your_database_is_intact_keep_the_app))
               }
             }
             }
@@ -140,10 +140,14 @@ class MainActivity : ComponentActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     // Widget/notification actions are events; retain the Activity's original launch intent.
-    handleWidgetAction(intent)
+    handleTimerAction(intent)
   }
 
-  private fun handleWidgetAction(intent: Intent?) {
+  private fun handleTimerAction(intent: Intent?) {
+    if (intent != null && TimerService.requestSaveFromNotification(this, intent)) {
+      intent.action = null
+      return
+    }
     if (intent?.action == "ACTION_WIDGET_FINISH") {
       TimerStateManager.initialize(applicationContext)
       val status = TimerStateManager.timerState.value.status

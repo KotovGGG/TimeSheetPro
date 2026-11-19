@@ -26,5 +26,6 @@ data class Report(
     val paymentPhotoUri: String? = null,
     val paymentConfirmedAt: Long? = null,
     val paymentNotes: String? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val currencyTotalsJson: String? = null
 )

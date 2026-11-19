@@ -6,7 +6,11 @@ import java.util.Calendar
 import java.util.TimeZone
 
 @Immutable
-data class DailySummary(val seconds: Long = 0, val amount: Double = 0.0)
+data class DailySummary(
+    val seconds: Long = 0,
+    val amount: Double = 0.0,
+    val totals: Map<String, Double> = if (amount == 0.0) emptyMap() else mapOf("USD" to amount)
+)
 
 internal fun dayStart(now: Long, zone: TimeZone = TimeZone.getDefault()): Long =
     Calendar.getInstance(zone).apply {
@@ -19,13 +23,13 @@ internal fun dayStart(now: Long, zone: TimeZone = TimeZone.getDefault()): Long =
 
 internal fun summarizeDay(entries: List<TimeEntry>, start: Long): DailySummary {
     var seconds = 0L
-    var amount = 0.0
+    val totals = sortedMapOf<String, Double>()
     for (entry in entries) {
         // Preserve the existing eligibility and stored financial totals.
         if (entry.startTime >= start && entry.endTime != null) {
             seconds += entry.durationSeconds
-            amount += entry.amount
+            totals[entry.currencyCode] = (totals[entry.currencyCode] ?: 0.0) + entry.amount
         }
     }
-    return DailySummary(seconds, amount)
+    return DailySummary(seconds, totals.values.singleOrNull() ?: 0.0, totals)
 }

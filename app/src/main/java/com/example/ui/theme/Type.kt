@@ -1,13 +1,26 @@
 package com.example.ui.theme
 
+import android.os.Build
 import androidx.compose.material3.Typography
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontVariation
+import com.example.R
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-val HumanistSans = FontFamily.SansSerif
-val InstrumentMonospace = FontFamily.Monospace
+val HumanistSans = if (Build.VERSION.SDK_INT >= 26) {
+    FontFamily(
+        Font(R.font.google_sans, FontWeight.Normal, variationSettings = FontVariation.Settings(FontVariation.weight(400))),
+        Font(R.font.google_sans, FontWeight.Medium, variationSettings = FontVariation.Settings(FontVariation.weight(500))),
+        Font(R.font.google_sans, FontWeight.SemiBold, variationSettings = FontVariation.Settings(FontVariation.weight(600))),
+        Font(R.font.google_sans, FontWeight.Bold, variationSettings = FontVariation.Settings(FontVariation.weight(700)))
+    )
+} else {
+    FontFamily.SansSerif
+}
+val LedgerFont = if (Build.VERSION.SDK_INT >= 26) HumanistSans else FontFamily.Monospace
 
 // Complete Material type scale; numeric roles below preserve ledger alignment.
 val Typography = Typography(
@@ -29,10 +42,10 @@ val Typography = Typography(
  )
 
 object LedgerStyles {
-    val MonospaceAmountLong = Typography.bodyLarge.copy(fontFamily = InstrumentMonospace)
-    val MonospaceNumberCompact = Typography.headlineSmall.copy(fontFamily = InstrumentMonospace, fontWeight = FontWeight.Bold)
-    val MonospaceNumberLarge = Typography.displaySmall.copy(fontFamily = InstrumentMonospace, fontWeight = FontWeight.Bold)
-    val MonospaceNumberMedium = Typography.titleLarge.copy(fontFamily = InstrumentMonospace)
-    val MonospaceNumberSmall = Typography.bodyMedium.copy(fontFamily = InstrumentMonospace)
+    val AmountLong = Typography.bodyLarge.copy(fontFamily = LedgerFont, fontFeatureSettings = "tnum")
+    val NumberCompact = Typography.headlineSmall.copy(fontFamily = LedgerFont, fontFeatureSettings = "tnum", fontWeight = FontWeight.Bold)
+    val NumberLarge = Typography.displaySmall.copy(fontFamily = LedgerFont, fontFeatureSettings = "tnum", fontWeight = FontWeight.Bold)
+    val NumberMedium = Typography.titleLarge.copy(fontFamily = LedgerFont, fontFeatureSettings = "tnum")
+    val NumberSmall = Typography.bodyMedium.copy(fontFamily = LedgerFont, fontFeatureSettings = "tnum")
     val UppercaseSectionHeader = Typography.labelMedium.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
 }

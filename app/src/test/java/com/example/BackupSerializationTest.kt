@@ -2,6 +2,7 @@ package com.example
 
 import com.example.data.local.entity.*
 import com.example.ui.screens.settings.BackupPayload
+import com.example.ui.screens.settings.withCurrentCurrencies
 import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
@@ -12,6 +13,22 @@ class BackupSerializationTest {
         ignoreUnknownKeys = true
         encodeDefaults = true
         prettyPrint = false
+    }
+
+    @Test
+    fun legacyBackupUsesTheSavedGlobalCurrency() {
+        val entry = TimeEntry(
+            clientId = 1, startTime = 0, endTime = 3600000, durationSeconds = 3600,
+            rawDurationSeconds = 3600, comment = null, appliedRate = 100.0, amount = 100.0
+        )
+        val old = BackupPayload(1, emptyList(), listOf(RateHistoryEntry(clientId = 1, rate = 100.0,
+            effectiveFrom = 0)), listOf(entry), AppSettings(currency = "RUB"))
+        val restored = old.withCurrentCurrencies()
+        assertEquals("RUB", restored.timeEntries.single().currencyCode)
+        assertEquals("RUB", restored.rateHistory.single().currencyCode)
+        assertEquals(100.0, restored.timeEntries.single().amount, 0.0)
+        assertEquals(mapOf("EUR" to 5.0, "RUB" to 100.0),
+            (restored.timeEntries + entry.copy(currencyCode = "EUR", amount = 5.0)).currencyTotals())
     }
 
     @Test

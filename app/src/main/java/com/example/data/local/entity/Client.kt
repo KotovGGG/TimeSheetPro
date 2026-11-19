@@ -12,5 +12,6 @@ data class Client(
     val colorHex: String,
     val defaultHourlyRate: Double?,
     val isArchived: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val currencyCode: String? = null
 )

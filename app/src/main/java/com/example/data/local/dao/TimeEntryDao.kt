@@ -7,7 +7,8 @@ import kotlinx.coroutines.flow.Flow
 
 data class ClientUnpaidBalanceHelper(
     val clientId: Long,
-    val unpaidAmount: Double
+    val unpaidAmount: Double,
+    val currencyCode: String = "USD"
 )
 
 @Dao
@@ -80,12 +81,19 @@ interface TimeEntryDao {
     suspend fun deleteEntries(ids: List<Long>)
 
     @Query("""
-        SELECT clientId, SUM(amount) as unpaidAmount 
+        SELECT clientId, currencyCode, SUM(amount) as unpaidAmount
         FROM time_entries 
         WHERE status = 'NOT_PAID' AND endTime IS NOT NULL
-        GROUP BY clientId
+        GROUP BY clientId, currencyCode
     """)
     fun getUnpaidBalancesDirect(): Flow<List<ClientUnpaidBalanceHelper>>
+
+    @Query("""
+        SELECT id FROM time_entries
+        WHERE clientId = :clientId AND startTime = :sessionStart AND createdAt = :sessionStart
+        ORDER BY id LIMIT 1
+    """)
+    suspend fun findSavedTimerSessionId(clientId: Long, sessionStart: Long): Long?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTimeEntry(entry: TimeEntry): Long

@@ -1,5 +1,6 @@
 package com.example.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
@@ -25,5 +26,6 @@ data class TimeEntry(
     val amount: Double,
     val status: TimeEntryStatus = TimeEntryStatus.NOT_PAID,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "'USD'") val currencyCode: String = "USD"
 )

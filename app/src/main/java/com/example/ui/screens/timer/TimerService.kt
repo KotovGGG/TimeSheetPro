@@ -1,28 +1,40 @@
 package com.example.ui.screens.timer
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.os.SystemClock
+import android.text.format.DateUtils
+import android.util.Log
+import android.view.View
 import android.widget.RemoteViews
+import androidx.annotation.RequiresApi
+import androidx.room.withTransaction
 import androidx.core.app.NotificationCompat
+import androidx.core.net.toUri
 import androidx.glance.appwidget.updateAll
 import com.example.MainActivity
 import com.example.R
 import com.example.TimeSheetApp
+import com.example.data.local.AppDatabase
 import com.example.data.local.entity.AppSettings
-import com.example.data.local.entity.AmountRoundingMode
-import com.example.data.local.entity.TimeEntry
-import com.example.data.local.entity.TimeEntryStatus
+import com.example.utils.AutoBackupManager
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.firstOrNull
+import java.time.Duration
+import java.time.Instant
 
 class TimerService : Service() {
 
@@ -34,7 +46,22 @@ class TimerService : Service() {
         const val ACTION_PAUSE = "ACTION_PAUSE"
         const val ACTION_RESUME = "ACTION_RESUME"
         const val ACTION_FINISH = "ACTION_FINISH"
+        private const val ACTION_SAVE_SESSION = "ACTION_SAVE_SESSION"
+        private const val ACTION_OPEN_AND_SAVE = "ACTION_OPEN_AND_SAVE"
+        private const val EXTRA_SESSION_START = "session_start"
         const val ACTION_UPDATE = "ACTION_UPDATE"
+
+        private fun saveActivity(context: Context) =
+            ComponentName(context.packageName, "${context.packageName}.SaveTimerActivity")
+
+        internal fun requestSaveFromNotification(context: Context, intent: Intent): Boolean {
+            if (intent.action != ACTION_OPEN_AND_SAVE || intent.component != saveActivity(context)) return false
+            context.startService(Intent(context, TimerService::class.java).apply {
+                action = ACTION_SAVE_SESSION
+                putExtra(EXTRA_SESSION_START, intent.getLongExtra(EXTRA_SESSION_START, 0L))
+            })
+            return true
+        }
         
         fun startService(context: Context, clientId: Long? = null) {
             val intent = Intent(context, TimerService::class.java).apply {
@@ -62,17 +89,23 @@ class TimerService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
     private var updateJob: Job? = null
     private var isServiceStarted = false
+    private var savingSession = false
+    private var saveFailed = false
+    private var screenOff = false
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val action = intent.action
+            screenOff = action == Intent.ACTION_SCREEN_OFF
+            val state = TimerStateManager.timerState.value
+            if (state.status != TimerStatus.IDLE) updateNotification(state)
             if (action == Intent.ACTION_USER_PRESENT || action == Intent.ACTION_SCREEN_ON) {
                 serviceScope.launch {
                     try {
                         TimerStateManager.incrementWidgetTick()
                         TimeSheetWidget().updateAll(applicationContext)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        android.util.Log.w("TimerService", "Widget refresh failed", e)
                     }
                 }
             }
@@ -82,11 +115,13 @@ class TimerService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        screenOff = !getSystemService(PowerManager::class.java).isInteractive
         
         try {
             val filter = IntentFilter().apply {
                 addAction(Intent.ACTION_USER_PRESENT)
                 addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
             }
             registerReceiver(screenReceiver, filter)
         } catch (e: Exception) {
@@ -120,9 +155,15 @@ class TimerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         
+        val current = TimerStateManager.timerState.value
+        if (savingSession || intent?.hasExtra(EXTRA_SESSION_START) == true &&
+            intent.getLongExtra(EXTRA_SESSION_START, 0) != current.sessionStartTime
+        ) return START_STICKY
+
         // Handle actions first so that state is updated before startForeground
         when (action) {
             ACTION_START -> {
+                saveFailed = false
                 val state = TimerStateManager.timerState.value
                 if (state.status == TimerStatus.IDLE) {
                     val clientIdExtra = intent?.getLongExtra("clientId", -1L) ?: -1L
@@ -138,6 +179,7 @@ class TimerService : Service() {
                 TimerStateManager.resume()
                 startTicker()
             }
+            ACTION_SAVE_SESSION -> saveSession(intent?.getLongExtra(EXTRA_SESSION_START, 0) ?: 0)
             ACTION_FINISH -> {
                 finishTimer()
                 return START_NOT_STICKY
@@ -150,11 +192,11 @@ class TimerService : Service() {
         val state = TimerStateManager.timerState.value
         if (state.status != TimerStatus.IDLE) {
             isServiceStarted = true
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
                     NOTIFICATION_ID, 
                     buildNotification(state), 
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
                 )
             } else {
                 startForeground(NOTIFICATION_ID, buildNotification(state))
@@ -169,22 +211,17 @@ class TimerService : Service() {
     private fun startTicker() {
         if (updateJob?.isActive == true) return
         updateJob = serviceScope.launch {
-            var tickCount = 0
             while (isActive) {
                 val state = TimerStateManager.timerState.value
                 if (state.status == TimerStatus.RUNNING || state.status == TimerStatus.PAUSED) {
-                    // Update notification every second to keep both main time and pause time completely synchronized
-                    updateNotification(state)
-                    
                     // Update Glance widget every second to keep time perfectly synced in real-time
                     TimerStateManager.incrementWidgetTick()
                     try {
                         TimeSheetWidget().updateAll(applicationContext)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        android.util.Log.w("TimerService", "Widget refresh failed", e)
                     }
                 }
-                tickCount++
                 delay(1000)
             }
         }
@@ -196,151 +233,202 @@ class TimerService : Service() {
     }
 
     private fun buildNotification(state: TimerState): Notification {
-        // Tap intent to open MainActivity
-        val tapIntent = Intent(this, MainActivity::class.java).apply {
+        val open = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        val tapPendingIntent = PendingIntent.getActivity(
-            this, 0, tapIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val openApp = PendingIntent.getActivity(
+            this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
+        val running = state.status == TimerStatus.RUNNING
         val elapsed = TimerStateManager.getElapsedSeconds()
-        
-        val pauseSecs = TimerStateManager.getPauseSeconds()
-        val pauseBase = android.os.SystemClock.elapsedRealtime() - (pauseSecs * 1000)
-        val isPaused = state.status == TimerStatus.PAUSED
-
-        val clientVisibility = android.view.View.GONE
-        val pauseVisibility = if (state.status != TimerStatus.IDLE && pauseSecs > 0) android.view.View.VISIBLE else android.view.View.GONE
-
-        val baseTime = android.os.SystemClock.elapsedRealtime() - (elapsed * 1000)
-        val isStarted = state.status == TimerStatus.RUNNING
-
-        val playPauseIcon = if (state.status == TimerStatus.RUNNING) {
-            com.example.R.drawable.ic_pause
-        } else {
-            com.example.R.drawable.ic_play
+        val pauseSeconds = TimerStateManager.getPauseSeconds()
+        val canSave = state.clientId != null && state.sessionStartTime > 0
+        val locked = screenOff || getSystemService(KeyguardManager::class.java).isKeyguardLocked
+        val pauseLabel = getString(if (running) R.string.timer_pause else R.string.timer_resume)
+        val finishLabel = getString(if (canSave) R.string.timer_save_session else R.string.timer_finish)
+        val pause = sessionAction(
+            if (running) ACTION_PAUSE else ACTION_RESUME, state.sessionStartTime
+        )
+        val finish = when {
+            !canSave -> getFinishPendingIntent()
+            locked -> sessionAction(ACTION_SAVE_SESSION, state.sessionStartTime)
+            else -> openAndSave(state.sessionStartTime)
         }
-        val playPauseBg = if (state.status == TimerStatus.RUNNING) {
-            com.example.R.drawable.bg_notification_button_secondary
-        } else {
-            com.example.R.drawable.bg_notification_button_primary
-        }
-        val playPauseActionTitle = if (state.status == TimerStatus.RUNNING) "Пауза" else "Продолжить"
-
-        // Collapsed view
-        val collapsedView = RemoteViews(packageName, R.layout.notification_timer).apply {
-            setTextViewText(R.id.client_name, "")
-            setViewVisibility(R.id.client_name, clientVisibility)
-            
-            // Set up Chronometer
-            setChronometer(R.id.timer_text, baseTime, null, isStarted)
-            
-            setChronometer(R.id.pause_text, pauseBase, null, isPaused)
-            setViewVisibility(R.id.pause_text, pauseVisibility)
-            
-            // Set up pending intents for actions
-            setOnClickPendingIntent(R.id.btn_play_pause, getActionPendingIntent(state.status))
-            setContentDescription(R.id.btn_play_pause, playPauseActionTitle)
-            setOnClickPendingIntent(R.id.btn_stop, getFinishPendingIntent())
-            
-            // Icons & backgrounds
-            setImageViewResource(R.id.btn_play_pause, playPauseIcon)
-            setInt(R.id.btn_play_pause, "setBackgroundResource", playPauseBg)
+        val pauseIcon = if (running) R.drawable.ic_pause else R.drawable.ic_play
+        val saveStatus = when {
+            savingSession -> getString(R.string.timer_saving)
+            saveFailed -> getString(R.string.timer_save_retry)
+            else -> null
         }
 
-        // Expanded view
-        val expandedView = RemoteViews(packageName, R.layout.notification_timer_big).apply {
-            setTextViewText(R.id.client_name, "")
-            setViewVisibility(R.id.client_name, clientVisibility)
-            
-            // Set up Chronometer
-            setChronometer(R.id.timer_text, baseTime, null, isStarted)
-            
-            setChronometer(R.id.pause_text, pauseBase, null, isPaused)
-            setViewVisibility(R.id.pause_text, pauseVisibility)
-            
-            setOnClickPendingIntent(R.id.btn_play_pause, getActionPendingIntent(state.status))
-            setContentDescription(R.id.btn_play_pause, playPauseActionTitle)
-            setOnClickPendingIntent(R.id.btn_stop, getFinishPendingIntent())
-            
-            // Icons & backgrounds
-            setImageViewResource(R.id.btn_play_pause, playPauseIcon)
-            setInt(R.id.btn_play_pause, "setBackgroundResource", playPauseBg)
+        if (locked && Build.VERSION.SDK_INT >= 36 &&
+            Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1 &&
+            getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
+        ) {
+            fun action(
+                icon: Int,
+                label: String,
+                intent: PendingIntent,
+                primary: Boolean,
+                requiresUnlock: Boolean = false
+            ) =
+                Notification.Action.Builder(Icon.createWithResource(this, icon), label, intent)
+                    .setAuthenticationRequired(requiresUnlock)
+                    .apply {
+                        if (Build.VERSION.SDK_INT >= 37) {
+                            setStyleHint(Notification.Action.STYLE_ICON_ONLY)
+                            setEmphasisHint(if (primary) {
+                                Notification.Action.EMPHASIS_PRIMARY
+                            } else {
+                                Notification.Action.EMPHASIS_SECONDARY
+                            })
+                        }
+                    }
+                    .build()
+
+            val live = Notification.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_timer_notification)
+                .setColor(getColor(R.color.widget_primary))
+                .setContentIntent(openApp)
+                .setCategory(Notification.CATEGORY_STOPWATCH)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+                .setRequestPromotedOngoing(true)
+                .addAction(action(pauseIcon, pauseLabel, pause, primary = true))
+                .addAction(action(R.drawable.ic_save, finishLabel, finish, primary = false, requiresUnlock = !canSave))
+            saveStatus?.let(live::setContentTitle)
+            if (Build.VERSION.SDK_INT >= 37) {
+                live.setStyle(stopwatchStyle(running, elapsed, pauseSeconds))
+            } else {
+                live.setContentTitle(saveStatus ?: getString(R.string.app_name))
+                    .setContentText(if (running) pauseText(pauseSeconds)
+                        else "${DateUtils.formatElapsedTime(elapsed)} · ${pauseText(pauseSeconds)}")
+                    .setWhen(System.currentTimeMillis() - elapsed * 1000)
+                    .setShowWhen(running)
+                    .setUsesChronometer(running)
+            }
+            return live.build()
         }
 
-        // Format duration for lock screen fallback text
-        val hours = elapsed / 3600
-        val minutes = (elapsed % 3600) / 60
-        val seconds = elapsed % 60
-        val durationText = String.format(java.util.Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
-        val statusText = if (isPaused) "Запись приостановлена" else "Идет запись времени"
-
-        // Build a highly interactive standard fallback notification for lock screen / secure contexts
-        val publicNotificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(com.example.R.drawable.ic_play)
-            .setContentTitle("TimeSheetPro")
-            .setContentIntent(tapPendingIntent)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+        val customView = timerViews(running, elapsed, pauseSeconds, saveStatus).apply {
+            setImageViewResource(R.id.btn_play_pause, pauseIcon)
+            setContentDescription(R.id.btn_play_pause, pauseLabel)
+            setContentDescription(R.id.btn_stop, finishLabel)
+            setOnClickPendingIntent(R.id.btn_play_pause, pause)
+            setOnClickPendingIntent(R.id.btn_stop, finish)
+        }
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_timer_notification)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(saveStatus ?: "${formatDuration(elapsed)} · ${pauseText(pauseSeconds)}")
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(customView)
+            .setCustomBigContentView(customView)
+            .setContentIntent(openApp)
+            .setCategory(NotificationCompat.CATEGORY_STOPWATCH)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-
-        if (isStarted) {
-            publicNotificationBuilder.setUsesChronometer(true)
-            publicNotificationBuilder.setWhen(baseTime)
-            publicNotificationBuilder.setContentText(statusText)
-        } else {
-            publicNotificationBuilder.setUsesChronometer(false)
-            publicNotificationBuilder.setContentText("$statusText: $durationText")
-        }
-
-        // Add standard interactive actions to the lock screen notification
-        val playPauseActionIcon = if (state.status == TimerStatus.RUNNING) {
-            com.example.R.drawable.ic_pause
-        } else {
-            com.example.R.drawable.ic_play
-        }
-        val playPauseAction = NotificationCompat.Action.Builder(
-            playPauseActionIcon,
-            playPauseActionTitle,
-            getActionPendingIntent(state.status)
-        ).build()
-
-        val stopAction = NotificationCompat.Action.Builder(
-            com.example.R.drawable.ic_save,
-            "Завершить",
-            getFinishPendingIntent()
-        ).build()
-
-        publicNotificationBuilder.addAction(playPauseAction)
-        publicNotificationBuilder.addAction(stopAction)
-
-        val publicNotification = publicNotificationBuilder.build()
-
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(com.example.R.drawable.ic_play) // Use local icon
-            .setContentTitle("TimeSheetPro")
-            .setContentText("$statusText: $durationText")
-            .setCustomContentView(collapsedView)
-            .setCustomBigContentView(expandedView)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-            .setContentIntent(tapPendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setPublicVersion(publicNotification)
+            .setShowWhen(false)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
 
-    private fun getActionPendingIntent(status: TimerStatus): PendingIntent {
-        val action = if (status == TimerStatus.RUNNING) ACTION_PAUSE else ACTION_RESUME
-        val intent = Intent(this, TimerService::class.java).apply { this.action = action }
-        return PendingIntent.getService(
-            this, if (status == TimerStatus.RUNNING) 1 else 2, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+    @RequiresApi(37)
+    private fun stopwatchStyle(running: Boolean, elapsed: Long, pauseSeconds: Long): Notification.MetricStyle {
+        val format = Notification.Metric.TimeDifference.FORMAT_CHRONOMETER
+        val now = Instant.now()
+        fun stopwatch(seconds: Long, counting: Boolean, label: Int): Notification.Metric {
+            val value = if (counting) {
+                Notification.Metric.TimeDifference.forStopwatch(now.minusSeconds(seconds), format)
+            } else {
+                Notification.Metric.TimeDifference.forPausedStopwatch(Duration.ofSeconds(seconds), format)
+            }
+            return Notification.Metric(value, getString(label))
+        }
+        return Notification.MetricStyle()
+            .addMetric(stopwatch(elapsed, running, R.string.timer_work_duration))
+            .addMetric(stopwatch(pauseSeconds, !running, R.string.timer_break_duration))
+            .setCriticalMetric(0)
+    }
+
+    private fun pauseText(seconds: Long) =
+        getString(R.string.timer_break_clock, DateUtils.formatElapsedTime(seconds))
+
+    private fun timerViews(running: Boolean, elapsed: Long, pauseSeconds: Long, saveStatus: String?) =
+        RemoteViews(packageName, R.layout.notification_timer).apply {
+            val now = SystemClock.elapsedRealtime()
+            val showPauseClock = !running && saveStatus == null
+            setViewVisibility(R.id.timer_text, if (running) View.VISIBLE else View.GONE)
+            setViewVisibility(R.id.timer_frozen, if (running) View.GONE else View.VISIBLE)
+            setChronometer(R.id.timer_text, now - elapsed * 1000, null, running)
+            setTextViewText(R.id.timer_frozen, DateUtils.formatElapsedTime(elapsed))
+            setViewVisibility(R.id.timer_pause_clock, if (showPauseClock) View.VISIBLE else View.GONE)
+            setViewVisibility(R.id.timer_pause_frozen, if (showPauseClock) View.GONE else View.VISIBLE)
+            setChronometer(R.id.timer_pause_clock, now - pauseSeconds * 1000, null, showPauseClock)
+            setTextViewText(R.id.timer_pause_frozen, saveStatus ?: DateUtils.formatElapsedTime(pauseSeconds))
+        }
+
+    private fun sessionAction(action: String, sessionStart: Long): PendingIntent {
+        val intent = Intent(this, TimerService::class.java).apply {
+            this.action = action
+            data = "timesheetpro://timer/$sessionStart".toUri()
+            putExtra(EXTRA_SESSION_START, sessionStart)
+        }
+        return PendingIntent.getService(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+    }
+
+    private fun openAndSave(sessionStart: Long): PendingIntent {
+        val intent = Intent(ACTION_OPEN_AND_SAVE).apply {
+            component = saveActivity(this@TimerService)
+            data = "timesheetpro://timer/$sessionStart".toUri()
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_SESSION_START, sessionStart)
+        }
+        return PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+    }
+
+    private fun saveSession(sessionStart: Long) {
+        val state = TimerStateManager.beginNotificationSave(sessionStart) ?: return
+        val clientId = checkNotNull(state.clientId)
+        val finishedAt = System.currentTimeMillis()
+        savingSession = true
+        saveFailed = false
+        serviceScope.launch {
+            var saved = false
+            try {
+                val app = application as TimeSheetApp
+                val database = AppDatabase.getDatabase(app)
+                val entryId = database.withTransaction {
+                    val entries = database.timeEntryDao()
+                    // A retry after process death must not insert the same session twice.
+                    entries.findSavedTimerSessionId(clientId, sessionStart) ?: run {
+                        val client = checkNotNull(app.container.clientRepository.getClientById(clientId).first())
+                        val settings = app.container.settingsRepository.getSettingsDirect() ?: AppSettings()
+                        entries.insertTimeEntry(trackedSessionEntry(
+                            clientId, client, state.comment, null, state.accumulatedSeconds,
+                            settings, sessionStart, finishedAt, createdAt = sessionStart
+                        ))
+                    }
+                }
+                TimerStateManager.showSavedNotificationEntry(entryId)
+                saved = true
+                AutoBackupManager.triggerBackup(app)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                // Keep the paused session available for retry if reading or writing Room fails.
+                saveFailed = true
+                Log.e("TimerService", "Could not save timer session", error)
+            } finally {
+                TimerStateManager.endNotificationSave(saved)
+                savingSession = false
+                if (!saved && serviceJob.isActive) updateNotification(TimerStateManager.timerState.value)
+            }
+        }
     }
 
     private fun getFinishPendingIntent(): PendingIntent {
@@ -383,24 +471,11 @@ class TimerService : Service() {
         }
     }
 
-    private fun roundAmount(amount: Double, mode: AmountRoundingMode, step: Double): Double {
-        if (mode == AmountRoundingMode.NONE || step <= 0.0) {
-            return kotlin.math.round(amount * 100.0) / 100.0
-        }
-        val factor = 1.0 / step
-        return when (mode) {
-            AmountRoundingMode.ROUND_UP -> kotlin.math.ceil(amount * factor) / factor
-            AmountRoundingMode.ROUND_DOWN -> kotlin.math.floor(amount * factor) / factor
-            AmountRoundingMode.ROUND_NEAREST -> kotlin.math.round(amount * factor) / factor
-            else -> amount
-        }
-    }
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
-                "Time Tracking Service",
+                getString(R.string.timer_notification_channel),
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC

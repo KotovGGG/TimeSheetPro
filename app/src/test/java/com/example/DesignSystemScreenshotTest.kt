@@ -25,7 +25,7 @@ import java.util.TimeZone
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(application = TimeSheetApp::class, qualifiers = "w412dp-h915dp-xxhdpi", sdk = [36])
+@Config(application = TimeSheetApp::class, qualifiers = "ru-rRU-w412dp-h915dp-xxhdpi", sdk = [36])
 class DesignSystemScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
@@ -38,11 +38,11 @@ class DesignSystemScreenshotTest {
         db.timeEntryDao().insertTimeEntry(TimeEntry(id = 201, clientId = 101, startTime = 1700000000000,
             endTime = 1700003600000, durationSeconds = 3600, rawDurationSeconds = 3600,
             comment = "Разработка интерфейса", appliedRate = 2500.0, amount = 2500.0,
-            status = TimeEntryStatus.NOT_PAID, createdAt = 1, updatedAt = 1))
+            status = TimeEntryStatus.NOT_PAID, createdAt = 1, updatedAt = 1, currencyCode = "RUB"))
         db.timeEntryDao().insertTimeEntry(TimeEntry(id = 202, clientId = 102, startTime = 1700003600000,
             endTime = 1700007200000, durationSeconds = 3600, rawDurationSeconds = 3600,
             comment = "Большая сумма и длинное название", appliedRate = 9876543.21, amount = 9876543.21,
-            status = TimeEntryStatus.PAID, createdAt = 1, updatedAt = 1))
+            status = TimeEntryStatus.PAID, createdAt = 1, updatedAt = 1, currencyCode = "EUR"))
         db.appSettingsDao().saveSettings(AppSettings(globalHourlyRate = 1500.0, currency = "RUB"))
     }
 
@@ -55,7 +55,7 @@ class DesignSystemScreenshotTest {
     }
 
     @Test
-    @Config(qualifiers = "w915dp-h412dp-land-xxhdpi")
+    @Config(qualifiers = "ru-rRU-w915dp-h412dp-land-xxhdpi")
     fun mainScreensInLandscape() {
         captureMainScreens(suffix = "-landscape")
     }

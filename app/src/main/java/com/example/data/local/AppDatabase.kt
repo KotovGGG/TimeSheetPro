@@ -27,7 +27,7 @@ import com.example.data.local.entity.TimeEntry
         AppSettings::class,
         Report::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -87,8 +87,27 @@ abstract class AppDatabase : RoomDatabase() {
         // Shared by production and migration tests. Unknown versions must fail without deleting data.
         internal fun buildDatabase(context: Context, name: String): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val currency = db.query("SELECT currency FROM app_settings WHERE id = 1").use {
+                    if (it.moveToFirst()) it.getString(0) else "USD"
+                }
+                val code = currency.takeIf { it.matches(Regex("[A-Z]{3}")) } ?: "USD"
+                db.execSQL("ALTER TABLE clients ADD COLUMN currencyCode TEXT")
+                db.execSQL("ALTER TABLE time_entries ADD COLUMN currencyCode TEXT NOT NULL DEFAULT 'USD'")
+                db.execSQL("ALTER TABLE rate_history ADD COLUMN currencyCode TEXT NOT NULL DEFAULT 'USD'")
+                db.execSQL("ALTER TABLE reports ADD COLUMN currencyTotalsJson TEXT")
+                db.execSQL("UPDATE time_entries SET currencyCode = ?", arrayOf(code))
+                db.execSQL("UPDATE rate_history SET currencyCode = ?", arrayOf(code))
+                db.execSQL(
+                    "UPDATE reports SET currencyTotalsJson = ? || totalAmount || '}'",
+                    arrayOf("{\"" + code + "\":")
+                )
+            }
+        }
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {

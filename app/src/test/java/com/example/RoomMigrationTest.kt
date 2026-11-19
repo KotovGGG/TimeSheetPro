@@ -33,8 +33,37 @@ class RoomMigrationTest {
     )
 
     @Test
+    fun migrate2To3PreservesReportAndPaymentDetails() {
+        helper.createDatabase("migration-currency-v2", 2).use { db ->
+            db.execSQL("""
+                INSERT INTO app_settings (id, globalHourlyRate, currency, timeRoundingMinutes,
+                    amountRoundingMode, amountRoundingStep, firstDayOfWeek, themeMode)
+                VALUES (1, 20, 'EUR', 0, 'NONE', 0, 'MONDAY', 'SYSTEM')
+            """.trimIndent())
+            db.execSQL("""
+                INSERT INTO reports (id, clientNames, periodLabel, exportFormat, totalAmount,
+                    totalDurationSeconds, entriesCount, entryIdsJson, filePath, fileName,
+                    status, paymentPhotoUri, paymentConfirmedAt, paymentNotes, createdAt)
+                VALUES (17, 'Studio', 'Today', 'PDF', 42.75, 3600, 1, '[101]',
+                    '/files/report.pdf', 'report.pdf', 'PAID', 'content://receipt/1', 900, 'Paid', 700)
+            """.trimIndent())
+        }
+        helper.runMigrationsAndValidate("migration-currency-v2", 3, true, AppDatabase.MIGRATION_2_3).use { db ->
+            db.query("SELECT * FROM reports WHERE id = 17").use {
+                assertTrue(it.moveToFirst())
+                assertEquals(42.75, it.getDouble(it.getColumnIndexOrThrow("totalAmount")), 0.0)
+                assertEquals("{\"EUR\":42.75}", it.getString(it.getColumnIndexOrThrow("currencyTotalsJson")))
+                assertEquals("/files/report.pdf", it.getString(it.getColumnIndexOrThrow("filePath")))
+                assertEquals("content://receipt/1", it.getString(it.getColumnIndexOrThrow("paymentPhotoUri")))
+                assertEquals("PAID", it.getString(it.getColumnIndexOrThrow("status")))
+                assertEquals("[101]", it.getString(it.getColumnIndexOrThrow("entryIdsJson")))
+            }
+        }
+    }
+
+    @Test
     @Throws(IOException::class)
-    fun migrate1To2AllTablesPreservedAndReportsCreated() {
+    fun migrate1To3PreservesTablesAndAddsCurrencies() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         context.deleteDatabase(TEST_DB)
 
@@ -82,8 +111,8 @@ class RoomMigrationTest {
 
         db.close()
 
-        // 3. Run migration to Version 2 and validate schema against 2.json
-        db = helper.runMigrationsAndValidate(TEST_DB, 2, true, AppDatabase.MIGRATION_1_2)
+        // Validate the full upgrade path against the generated v3 schema.
+        db = helper.runMigrationsAndValidate(TEST_DB, 3, true, AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
 
         // 4. Verify data in all 4 original tables
         db.query("SELECT * FROM clients WHERE id = 1").use { cursor ->
@@ -107,6 +136,7 @@ class RoomMigrationTest {
             assertEquals(1L, cursor.getLong(cursor.getColumnIndexOrThrow("clientId")))
             assertEquals(1500.0, cursor.getDouble(cursor.getColumnIndexOrThrow("rate")), 0.001)
             assertEquals(1000L, cursor.getLong(cursor.getColumnIndexOrThrow("effectiveFrom")))
+            assertEquals("RUB", cursor.getString(cursor.getColumnIndexOrThrow("currencyCode")))
         }
 
         db.query("SELECT * FROM rate_history WHERE id = 11").use { cursor ->
@@ -124,6 +154,7 @@ class RoomMigrationTest {
             assertEquals("Разработка фичи №1", cursor.getString(cursor.getColumnIndexOrThrow("comment")))
             assertEquals("PAID", cursor.getString(cursor.getColumnIndexOrThrow("status")))
             assertEquals(1500.0, cursor.getDouble(cursor.getColumnIndexOrThrow("amount")), 0.001)
+            assertEquals("RUB", cursor.getString(cursor.getColumnIndexOrThrow("currencyCode")))
         }
 
         db.query("SELECT * FROM time_entries WHERE id = 101").use { cursor ->

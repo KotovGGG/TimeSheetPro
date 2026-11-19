@@ -1,5 +1,8 @@
 package com.example.utils.export
 
+import com.example.appLocale
+import com.example.R
+import com.example.appText
 import com.example.data.local.entity.AppSettings
 import com.example.data.local.entity.Client
 import com.example.data.local.entity.TimeEntry
@@ -9,11 +12,14 @@ import java.util.*
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-enum class XlsxColumn(val title: String) {
-    DATE("Дата"),
-    CLIENT("Заказчик"),
-    COMMENT("Комментарий"),
-    SUM("Сумма")
+enum class XlsxColumn(private val titleRes: Int) {
+    DATE(R.string.copy_date),
+    CLIENT(R.string.copy_client_2),
+    COMMENT(R.string.copy_comment),
+    SUM(R.string.copy_amount),
+    CURRENCY(R.string.copy_currency);
+
+    val title: String get() = appText(titleRes)
 }
 
 object XlsxGenerator {
@@ -185,9 +191,14 @@ object XlsxGenerator {
         sb.append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\n")
 
         // Exclude CLIENT column from table columns because client is placed in header block above table
-        val tableColumns = selectedColumns.filter { it != XlsxColumn.CLIENT }.ifEmpty {
+        val requested = selectedColumns.filter { it != XlsxColumn.CLIENT && it != XlsxColumn.CURRENCY }.ifEmpty {
             listOf(XlsxColumn.DATE, XlsxColumn.COMMENT, XlsxColumn.SUM)
         }
+        val tableColumns = if (XlsxColumn.SUM in requested) {
+            requested.toMutableList().apply { add(indexOf(XlsxColumn.SUM) + 1, XlsxColumn.CURRENCY) }
+        } else requested
+        val totals = sortedMapOf<String, Double>()
+
 
         // Set column widths
         sb.append("  <cols>\n")
@@ -197,6 +208,7 @@ object XlsxGenerator {
                 XlsxColumn.DATE -> 16
                 XlsxColumn.COMMENT -> 45
                 XlsxColumn.SUM -> 20
+                XlsxColumn.CURRENCY -> 13
                 else -> 20
             }
             sb.append("    <col min=\"$minMax\" max=\"$minMax\" width=\"$width\" customWidth=\"1\"/>\n")
@@ -211,7 +223,7 @@ object XlsxGenerator {
 
         // Title Row
         sb.append("    <row r=\"$rowIdx\" ht=\"24\" customHeight=\"1\">\n")
-        sb.append("      <c r=\"A$rowIdx\" t=\"inlineStr\" s=\"2\"><is><t>Отчёт по учёту времени</t></is></c>\n")
+        sb.append("      <c r=\"A$rowIdx\" t=\"inlineStr\" s=\"2\"><is><t>${escapeXml(appText(R.string.copy_time_tracking_report))}</t></is></c>\n")
         sb.append("    </row>\n")
         rowIdx++
 
@@ -222,19 +234,19 @@ object XlsxGenerator {
                 val distinctIds = entries.map { it.clientId }.distinct()
                 val clientMap = clients.associateBy { it.id }
                 if (distinctIds.size == 1) {
-                    clientMap[distinctIds.first()]?.name ?: "Все заказчики"
+                    clientMap[distinctIds.first()]?.name ?: appText(R.string.copy_all_clients)
                 } else if (distinctIds.size <= 3) {
                     distinctIds.mapNotNull { clientMap[it]?.name }.joinToString(", ")
                 } else {
-                    "Все заказчики (${distinctIds.size})"
+                    appText(R.string.copy_all_clients_1, distinctIds.size)
                 }
             }
-            else -> "Все заказчики"
+            else -> appText(R.string.copy_all_clients)
         }
 
         // Client Row
         sb.append("    <row r=\"$rowIdx\">\n")
-        sb.append("      <c r=\"A$rowIdx\" t=\"inlineStr\" s=\"3\"><is><t>Заказчик:</t></is></c>\n")
+        sb.append("      <c r=\"A$rowIdx\" t=\"inlineStr\" s=\"3\"><is><t>${escapeXml(appText(R.string.copy_client))}</t></is></c>\n")
         sb.append("      <c r=\"B$rowIdx\" t=\"inlineStr\" s=\"4\"><is><t>${escapeXml(resolvedClientName)}</t></is></c>\n")
         sb.append("    </row>\n")
         rowIdx++
@@ -242,7 +254,7 @@ object XlsxGenerator {
         // Period Row (if available)
         if (!periodLabel.isNullOrBlank()) {
             sb.append("    <row r=\"$rowIdx\">\n")
-            sb.append("      <c r=\"A$rowIdx\" t=\"inlineStr\" s=\"3\"><is><t>Период:</t></is></c>\n")
+            sb.append("      <c r=\"A$rowIdx\" t=\"inlineStr\" s=\"3\"><is><t>${escapeXml(appText(R.string.copy_period))}</t></is></c>\n")
             sb.append("      <c r=\"B$rowIdx\" t=\"inlineStr\" s=\"4\"><is><t>${escapeXml(periodLabel)}</t></is></c>\n")
             sb.append("    </row>\n")
             rowIdx++
@@ -256,23 +268,18 @@ object XlsxGenerator {
         sb.append("    <row r=\"$rowIdx\" ht=\"20\" customHeight=\"1\">\n")
         tableColumns.forEachIndexed { colIdx, col ->
             val ref = "${colLetter(colIdx)}$rowIdx"
-            val title = if (col == XlsxColumn.SUM && currencySymbol.isNotBlank()) {
-                "Сумма ($currencySymbol)"
-            } else {
-                col.title
-            }
+            val title = col.title
             sb.append("      <c r=\"$ref\" t=\"inlineStr\" s=\"1\"><is><t>${escapeXml(title)}</t></is></c>\n")
         }
         sb.append("    </row>\n")
         rowIdx++
 
-        val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
-        var totalSum = 0.0
+        val dateFormat = SimpleDateFormat("dd.MM.yyyy", appLocale())
 
         // Data Rows
         entries.forEach { entry ->
-            val roundedAmount = settings?.roundAmount(entry.amount) ?: entry.amount
-            totalSum += roundedAmount
+            val roundedAmount = entry.amount
+            totals[entry.currencyCode] = (totals[entry.currencyCode] ?: 0.0) + roundedAmount
 
             sb.append("    <row r=\"$rowIdx\">\n")
             tableColumns.forEachIndexed { colIdx, col ->
@@ -290,7 +297,10 @@ object XlsxGenerator {
                         val formattedVal = formatAmountValue(roundedAmount)
                         sb.append("      <c r=\"$ref\" t=\"n\" s=\"7\"><v>$formattedVal</v></c>\n")
                     }
-                    else -> {}
+                    XlsxColumn.CURRENCY -> {
+                        sb.append("      <c r=\"$ref\" t=\"inlineStr\" s=\"0\"><is><t>${escapeXml(entry.currencyCode)}</t></is></c>\n")
+                    }
+                    XlsxColumn.CLIENT -> Unit
                 }
             }
             sb.append("    </row>\n")
@@ -299,23 +309,30 @@ object XlsxGenerator {
 
         // Total Row
         val sumColIdx = tableColumns.indexOf(XlsxColumn.SUM)
-        val formattedTotal = formatAmountValue(totalSum)
+        val currencyColIdx = tableColumns.indexOf(XlsxColumn.CURRENCY)
+        if (sumColIdx >= 0) for ((code, amount) in totals.ifEmpty { mapOf(currencySymbol to 0.0) }) {
+            val formattedTotal = formatAmountValue(amount)
 
-        sb.append("    <row r=\"$rowIdx\" ht=\"22\" customHeight=\"1\">\n")
-        tableColumns.forEachIndexed { colIdx, _ ->
-            val ref = "${colLetter(colIdx)}$rowIdx"
-            if (colIdx == sumColIdx) {
-                // Highlighted Total Sum Cell
-                sb.append("      <c r=\"$ref\" t=\"n\" s=\"6\"><v>$formattedTotal</v></c>\n")
-            } else if (colIdx == 0) {
-                // "Итого" label
-                sb.append("      <c r=\"$ref\" t=\"inlineStr\" s=\"5\"><is><t>Итого</t></is></c>\n")
-            } else {
-                // Spacer cell in total row with same style
-                sb.append("      <c r=\"$ref\" t=\"inlineStr\" s=\"5\"><is><t></t></is></c>\n")
+            sb.append("    <row r=\"$rowIdx\" ht=\"22\" customHeight=\"1\">\n")
+            tableColumns.forEachIndexed { colIdx, _ ->
+                val ref = "${colLetter(colIdx)}$rowIdx"
+                if (colIdx == sumColIdx) {
+                    // Highlighted Total Sum Cell
+                    sb.append("      <c r=\"$ref\" t=\"n\" s=\"6\"><v>$formattedTotal</v></c>\n")
+                } else if (colIdx == currencyColIdx) {
+                    sb.append("      <c r=\"$ref\" t=\"inlineStr\" s=\"5\"><is><t>${escapeXml(code)}</t></is></c>\n")
+                } else if (colIdx == 0) {
+                    // "Итого" label
+                    sb.append("      <c r=\"$ref\" t=\"inlineStr\" s=\"5\"><is><t>${escapeXml(appText(R.string.copy_total))}</t></is></c>\n")
+                } else {
+                    // Spacer cell in total row with same style
+                    sb.append("      <c r=\"$ref\" t=\"inlineStr\" s=\"5\"><is><t></t></is></c>\n")
+                }
             }
+            sb.append("    </row>\n")
+
+            rowIdx++
         }
-        sb.append("    </row>\n")
 
         sb.append("  </sheetData>\n")
         sb.append("</worksheet>\n")

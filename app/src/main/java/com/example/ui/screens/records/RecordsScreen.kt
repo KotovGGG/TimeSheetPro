@@ -1,5 +1,8 @@
 package com.example.ui.screens.records
 
+import com.example.appLocale
+import com.example.R
+import com.example.appText
 import com.example.ui.theme.keepFocusedFieldVisible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -102,7 +105,14 @@ import com.example.data.repository.SortOrder
 import com.example.ui.AppViewModelProvider
 import com.example.ui.screens.timer.TimePickerDialog
 import com.example.ui.screens.timer.ComposeDatePickerDialog
+import com.example.ui.screens.timer.AppDurationPickerDialog
+import com.example.ui.screens.timer.TimerStateManager
+import com.example.ui.screens.timer.clockFormatter
+import com.example.ui.screens.timer.formatClockTime
 import com.example.ui.screens.timer.formatCurrency
+import com.example.ui.screens.timer.formatCurrencyTotals
+import com.example.data.local.entity.currencyTotals
+import com.example.data.local.entity.billingRate
 import com.example.ui.screens.timer.formatHours
 import com.example.ui.screens.timer.safeParseColor
 import com.example.ui.theme.LedgerStyles
@@ -116,9 +126,9 @@ import kotlinx.coroutines.delay
 
 private val paymentStatusChoices = TimeEntryStatus.entries.map { status ->
     status to when (status) {
-        TimeEntryStatus.PAID -> "Оплачено"
-        TimeEntryStatus.INVOICED -> "Счёт выставлен"
-        TimeEntryStatus.NOT_PAID -> "Не оплачен"
+        TimeEntryStatus.PAID -> appText(R.string.copy_paid_2)
+        TimeEntryStatus.INVOICED -> appText(R.string.copy_invoiced)
+        TimeEntryStatus.NOT_PAID -> appText(R.string.copy_unpaid)
     }
 }
 
@@ -137,13 +147,13 @@ private fun getStatusColors(status: TimeEntryStatus): Triple<Color, Color, Color
 @Composable
 fun RecordsScreen(
     modifier: Modifier = Modifier,
-    viewModel: RecordsViewModel = viewModel(factory = AppViewModelProvider.Factory)
+    viewModel: RecordsViewModel = viewModel(factory = AppViewModelProvider.Factory),
+    savedSessionId: Long? = null
 ) {
     val entries by viewModel.timeEntriesState.collectAsStateWithLifecycle()
     val clients by viewModel.clientsState.collectAsStateWithLifecycle()
     val currentLocale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val settings by viewModel.settingsState.collectAsStateWithLifecycle()
-    val unpaidBalances by viewModel.unpaidBalancesState.collectAsStateWithLifecycle()
 
     // Search and filter state from ViewModel
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -157,7 +167,7 @@ fun RecordsScreen(
     // Bulk export state
     var showBulkExportBottomSheet by remember { mutableStateOf(false) }
     var bulkExportFormat by remember { mutableStateOf("XLSX") }
-    val bulkExportSelectedXlsxColumns = remember { mutableStateListOf<XlsxColumn>(*XlsxColumn.values()) }
+    val bulkExportSelectedXlsxColumns = remember { mutableStateListOf<XlsxColumn>(*XlsxColumn.values().filter { it != XlsxColumn.CURRENCY }.toTypedArray()) }
     var bulkExportSuccessCard by remember { mutableStateOf(false) }
 
     // Selection mode state
@@ -175,6 +185,20 @@ fun RecordsScreen(
     var showManualAddDialog by rememberSaveable { mutableStateOf(false) }
     var editingEntry by rememberSaveable(stateSaver = com.example.ui.theme.formStateSaver<TimeEntry>()) { mutableStateOf<TimeEntry?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf<TimeEntry?>(null) }
+    var savedSession by rememberSaveable(stateSaver = com.example.ui.theme.formStateSaver<TimeEntry>()) {
+        mutableStateOf<TimeEntry?>(null)
+    }
+
+    LaunchedEffect(savedSessionId) {
+        if (savedSessionId != null) {
+            savedSession = viewModel.findEntry(savedSessionId)
+            if (savedSession != null) {
+                showManualAddDialog = false
+                editingEntry = null
+            }
+            TimerStateManager.acknowledgeSavedNotificationEntry(savedSessionId)
+        }
+    }
 
     // Manual add form state
     var selectedClientId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -194,12 +218,11 @@ fun RecordsScreen(
     }
 
     val totalHoursSeconds = entries.sumOf { it.durationSeconds }
-    val totalEarnings = entries.sumOf { it.amount }
 
     // Date formatting helpers
-    val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
-    val displayDateFormatter = remember { SimpleDateFormat("EEEE, d MMMM yyyy", Locale.forLanguageTag("ru")) }
-    val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", appLocale()) }
+    val displayDateFormatter = remember { SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(appLocale(), "yMMMMEEEEd"), appLocale()) }
+    val timeFormatter = clockFormatter()
 
     // Grouping only applies visually on screen. Under GROUP BY client we can still display date headers 
     // or group them as a single list depending on sort mode.
@@ -253,7 +276,7 @@ fun RecordsScreen(
     var exportPeriodPreset by remember { mutableStateOf("ALL") } // "ALL", "WEEK", "MONTH", "CUSTOM"
     var exportCustomStartDate by remember { mutableStateOf(System.currentTimeMillis() - 7 * 24 * 3600 * 1000) }
     var exportCustomEndDate by remember { mutableStateOf(System.currentTimeMillis()) }
-    val exportSelectedXlsxColumns = remember { mutableStateListOf<XlsxColumn>(*XlsxColumn.values()) }
+    val exportSelectedXlsxColumns = remember { mutableStateListOf<XlsxColumn>(*XlsxColumn.values().filter { it != XlsxColumn.CURRENCY }.toTypedArray()) }
 
     var isExporting by remember { mutableStateOf(false) }
     var generatedFileBytes by remember { mutableStateOf<ByteArray?>(null) }
@@ -270,14 +293,14 @@ fun RecordsScreen(
                 coroutineScope.launch {
                     try {
                         withContext(Dispatchers.IO) {
-                            checkNotNull(context.contentResolver.openOutputStream(uri)) { "Файл недоступен" }
+                            checkNotNull(context.contentResolver.openOutputStream(uri)) { appText(R.string.copy_file_unavailable) }
                                 .use { it.write(bytes) }
                         }
-                        android.widget.Toast.makeText(context, "Файл успешно сохранён!", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, appText(R.string.copy_file_saved), android.widget.Toast.LENGTH_SHORT).show()
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
-                        android.widget.Toast.makeText(context, "Ошибка сохранения: ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(context, appText(R.string.copy_could_not_save_the_file_1, error.localizedMessage), android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -286,11 +309,11 @@ fun RecordsScreen(
 
     if (isExporting) {
         AlertDialog(onDismissRequest = {}, confirmButton = {},
-            title = { Text("Создание отчёта") },
+            title = { Text(appText(R.string.copy_creating_report)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Text("Подготавливаем файл и сохраняем отчёт…")
+                    Text(appText(R.string.copy_preparing_and_saving_the_report))
                 }
             })
     }
@@ -328,12 +351,12 @@ fun RecordsScreen(
                             IconButton(onClick = { selectedEntryIds = emptySet() }) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "Отмена",
+                                    contentDescription = appText(R.string.copy_cancel),
                                     tint = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             }
                             Text(
-                                text = "Выбрано: ${selectedEntryIds.size}",
+                                text = appText(R.string.copy_selected_1, selectedEntryIds.size),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 fontWeight = FontWeight.Bold
@@ -350,7 +373,7 @@ fun RecordsScreen(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.FileUpload,
-                                    contentDescription = "Экспортировать отчёт",
+                                    contentDescription = appText(R.string.copy_export_report),
                                     tint = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             }
@@ -361,7 +384,7 @@ fun RecordsScreen(
                                 IconButton(onClick = { showBulkStatusMenu = true }) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Label,
-                                        contentDescription = "Изменить статус",
+                                        contentDescription = appText(R.string.copy_change_status),
                                         tint = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 }
@@ -369,7 +392,7 @@ fun RecordsScreen(
 
                             if (showBulkStatusMenu) {
                                 AppChoiceSheet(
-                                    title = "Статус выбранных записей",
+                                    title = appText(R.string.copy_status_of_selected_records),
                                     options = paymentStatusChoices,
                                     selected = entries.filter { it.id in selectedEntryIds }
                                         .map { it.status }.distinct().singleOrNull(),
@@ -388,7 +411,7 @@ fun RecordsScreen(
                             IconButton(onClick = { showBulkDeleteConfirm = true }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
-                                    contentDescription = "Удалить",
+                                    contentDescription = appText(R.string.copy_delete),
                                     tint = MaterialTheme.colorScheme.error
                                 )
                             }
@@ -396,9 +419,9 @@ fun RecordsScreen(
                             if (showBulkDeleteConfirm) {
                                 AlertDialog(
                                     onDismissRequest = { showBulkDeleteConfirm = false },
-                                    title = { Text("Удалить выбранные записи?") },
+                                    title = { Text(appText(R.string.copy_delete_selected_records)) },
                                     text = {
-                                        Text("Вы действительно хотите удалить ${getRecordsPluralString(selectedEntryIds.size)}? Это действие нельзя отменить.")
+                                        Text(appText(R.string.copy_permanently_delete_1, getRecordsPluralString(selectedEntryIds.size)))
                                     },
                                     confirmButton = {
                                         Button(
@@ -409,7 +432,7 @@ fun RecordsScreen(
                                             },
                                             variant = AppAction.Destructive
                                         ) {
-                                            Text("Удалить")
+                                            Text(appText(R.string.copy_delete))
                                         }
                                     },
                                     dismissButton = {
@@ -417,7 +440,7 @@ fun RecordsScreen(
                                             onClick = { showBulkDeleteConfirm = false },
                                             variant = AppAction.Quiet
                                         ) {
-                                            Text("Отмена")
+                                            Text(appText(R.string.copy_cancel))
                                         }
                                     },
                                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -444,7 +467,7 @@ fun RecordsScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = "Вручную добавить запись",
+                        contentDescription = appText(R.string.copy_add_a_manual_record),
                         modifier = Modifier.size(AppSpacing.xxl)
                     )
                 }
@@ -454,7 +477,7 @@ fun RecordsScreen(
         modifier = modifier
     ) { innerPadding ->
         val activeMonthVal by viewModel.activeMonth.collectAsStateWithLifecycle()
-        val monthFormat = remember { SimpleDateFormat("LLLL yyyy", Locale.forLanguageTag("ru")) }
+        val monthFormat = remember { SimpleDateFormat("LLLL yyyy", appLocale()) }
 
         var monthSwipeDirection by remember { mutableIntStateOf(1) }
         var dragOffsetX by remember { mutableFloatStateOf(0f) }
@@ -509,7 +532,7 @@ fun RecordsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Записи",
+                        text = appText(R.string.copy_records),
                         style = MaterialTheme.typography.headlineMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground
@@ -522,21 +545,21 @@ fun RecordsScreen(
                         IconButton(onClick = { showExportSuccessCard = false; showExportBottomSheet = true }) {
                             Icon(
                                 imageVector = Icons.Default.FileUpload,
-                                contentDescription = "Экспорт отчётов",
+                                contentDescription = appText(R.string.copy_export_reports),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
                         IconButton(onClick = { showReportsHistoryBottomSheet = true }) {
                             Icon(
                                 imageVector = Icons.Default.History,
-                                contentDescription = "История отчётов",
+                                contentDescription = appText(R.string.copy_report_history),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
                         IconButton(onClick = { showFilterBottomSheet = true }) {
                             Icon(
                                 imageVector = Icons.Default.FilterList,
-                                contentDescription = "Фильтры",
+                                contentDescription = appText(R.string.copy_filters),
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
@@ -557,7 +580,7 @@ fun RecordsScreen(
                     InputChip(
                         selected = true,
                         onClick = { viewModel.clearAllFilters() },
-                        label = { Text("Сбросить всё", fontWeight = FontWeight.Bold) },
+                        label = { Text(appText(R.string.copy_clear_all), fontWeight = FontWeight.Bold) },
                         trailingIcon = { Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(AppSpacing.lg)) },
                         colors = InputChipDefaults.inputChipColors()
                     )
@@ -565,13 +588,13 @@ fun RecordsScreen(
                     // Period active chip
                     if (selectedPeriod != "MONTH") {
                         val periodLabel = when (selectedPeriod) {
-                            "WEEK" -> "Эта неделя"
-                            "ALL" -> "За весь период"
+                            "WEEK" -> appText(R.string.copy_this_week)
+                            "ALL" -> appText(R.string.copy_all_time)
                             "CUSTOM" -> {
                                 val fmt = SimpleDateFormat("dd.MM.yy", currentLocale)
                                 "${fmt.format(Date(customStartDate ?: 0))}—${fmt.format(Date(customEndDate ?: 0))}"
                             }
-                            else -> "Этот месяц"
+                            else -> appText(R.string.copy_this_month)
                         }
                         InputChip(
                             selected = true,
@@ -621,9 +644,9 @@ fun RecordsScreen(
                             label = {
                                 Text(
                                     when (status) {
-                                        TimeEntryStatus.PAID -> "Оплачено"
-                                        TimeEntryStatus.INVOICED -> "Счёт выставлен"
-                                        TimeEntryStatus.NOT_PAID -> "Не оплачен"
+                                        TimeEntryStatus.PAID -> appText(R.string.copy_paid_2)
+                                        TimeEntryStatus.INVOICED -> appText(R.string.copy_invoiced)
+                                        TimeEntryStatus.NOT_PAID -> appText(R.string.copy_unpaid)
                                     }
                                 )
                             },
@@ -658,7 +681,7 @@ fun RecordsScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = "Предыдущий месяц",
+                                contentDescription = appText(R.string.copy_previous_month),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(AppSpacing.xl)
                             )
@@ -697,7 +720,7 @@ fun RecordsScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = "Следующий месяц",
+                                contentDescription = appText(R.string.copy_next_month),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(AppSpacing.xl)
                             )
@@ -729,8 +752,7 @@ fun RecordsScreen(
                 ) { displayedMonth ->
                     val entries = displayedMonth.second
                     val totalHoursSeconds = entries.sumOf { it.durationSeconds }
-                    val totalEarnings = entries.sumOf { it.amount }
-                    Column(
+                                    Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer(),
@@ -743,8 +765,8 @@ fun RecordsScreen(
                         ) {
                             if (!isSelectionMode) {
                                 item(key = "summary") {
-                                    com.example.ui.theme.AppLedgerSummary("Итого за период", formatHours(totalHoursSeconds),
-                                        formatCurrency(totalEarnings, settings.currency))
+                                    com.example.ui.theme.AppLedgerSummary(appText(R.string.copy_period_total), formatHours(totalHoursSeconds),
+                                        formatCurrencyTotals(entries.currencyTotals(), settings.currency))
                                 }
                             }
                             if (entries.isEmpty()) {
@@ -754,8 +776,8 @@ fun RecordsScreen(
                                         verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                                         Icon(Icons.Default.HistoryToggleOff, contentDescription = null,
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text("Записи не найдены", style = MaterialTheme.typography.titleMedium)
-                                        Text("Попробуйте изменить период или фильтры.",
+                                        Text(appText(R.string.copy_no_records_found), style = MaterialTheme.typography.titleMedium)
+                                        Text(appText(R.string.copy_try_a_different_period_or_filter),
                                             style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
@@ -767,26 +789,27 @@ fun RecordsScreen(
                             val headerText = if (currentSortOrder == SortOrder.CLIENT) {
                                 val clientId = groupKey.substringAfter("client_").toLongOrNull() ?: 0L
                                 val client = clients.find { it.id == clientId }
-                                (client?.name ?: "Заказчик недоступен")
+                                (client?.name ?: appText(R.string.copy_client_unavailable))
                             } else {
                                 val parsedDate = dateFormatter.parse(groupKey) ?: Date()
                                 displayDateFormatter.format(parsedDate)
                             }
 
                             val groupDuration = groupEntries.sumOf { it.durationSeconds }
-                            val groupEarnings = groupEntries.sumOf { it.amount }
 
                             Column(Modifier.fillMaxWidth().padding(vertical = AppSpacing.sm),
                                 verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                                 Text(headerText, style = MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
-                                    Text(formatHours(groupDuration), style = LedgerStyles.MonospaceNumberSmall,
+                                    Text(formatHours(groupDuration), style = LedgerStyles.NumberSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text(formatCurrency(groupEarnings, settings.currency),
-                                        style = LedgerStyles.MonospaceNumberSmall,
+                                    Text(formatCurrencyTotals(groupEntries.currencyTotals(), settings.currency),
+                                        style = LedgerStyles.NumberSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
+                                HorizontalDivider(Modifier.padding(top = AppSpacing.xs),
+                                    color = MaterialTheme.colorScheme.outlineVariant)
                             }
                         }
 
@@ -809,8 +832,8 @@ fun RecordsScreen(
                                         }
                                     }
                                     .combinedClickable(
-                                        onClickLabel = if (isSelectionMode) "Изменить выбор записи" else "Редактировать запись",
-                                        onLongClickLabel = "Выбрать запись",
+                                        onClickLabel = if (isSelectionMode) appText(R.string.copy_toggle_record_selection) else appText(R.string.copy_edit_record),
+                                        onLongClickLabel = appText(R.string.copy_select_record),
                                         onClick = {
                                             if (isSelectionMode) {
                                                 selectedEntryIds = if (isSelected) selectedEntryIds - entry.id
@@ -831,7 +854,7 @@ fun RecordsScreen(
                                     } else {
                                         Box(Modifier.size(AppSpacing.sm).clip(CircleShape).background(clientColor))
                                     }
-                                    Text(client?.name ?: "Заказчик недоступен",
+                                    Text(client?.name ?: appText(R.string.copy_client_unavailable),
                                         style = MaterialTheme.typography.titleMedium,
                                         modifier = Modifier.weight(1f))
                                 }
@@ -840,29 +863,37 @@ fun RecordsScreen(
                                     verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                                     Text("${timeFormatter.format(Date(entry.startTime))} – ${timeFormatter.format(Date(entry.endTime!!))}",
                                         style = MaterialTheme.typography.bodyMedium)
-                                    Text(formatHours(entry.durationSeconds), style = LedgerStyles.MonospaceNumberSmall,
+                                    Text(formatHours(entry.durationSeconds), style = LedgerStyles.NumberSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Text(formatCurrency(entry.amount, settings.currency),
-                                    style = LedgerStyles.MonospaceNumberMedium,
-                                    color = MaterialTheme.colorScheme.onSurface)
                                 if (!entry.comment.isNullOrBlank()) {
                                     Text(entry.comment, style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 }
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+                                    itemVerticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(formatCurrency(entry.amount, entry.currencyCode),
+                                        style = LedgerStyles.NumberMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.align(Alignment.CenterVertically))
                                 Button(onClick = { statusDropdownEntry = entry }, enabled = !isSelectionMode,
                                     variant = AppAction.Quiet,
                                     modifier = Modifier.testTag("status_badge_${entry.id}")) {
                                     Box(Modifier.size(AppSpacing.sm).clip(CircleShape).background(statusColors.second))
                                     Spacer(Modifier.width(AppSpacing.sm))
                                     Text(when (entry.status) {
-                                        TimeEntryStatus.PAID -> "Оплачено"
-                                        TimeEntryStatus.INVOICED -> "Счёт выставлен"
-                                        TimeEntryStatus.NOT_PAID -> "Не оплачен"
+                                        TimeEntryStatus.PAID -> appText(R.string.copy_paid_2)
+                                        TimeEntryStatus.INVOICED -> appText(R.string.copy_invoiced)
+                                        TimeEntryStatus.NOT_PAID -> appText(R.string.copy_unpaid)
                                     }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(Modifier.width(AppSpacing.xs))
                                     Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                }
                                 }
                             }
                         }
@@ -874,10 +905,46 @@ fun RecordsScreen(
 }
 }
 
+    savedSession?.let { entry ->
+        AlertDialog(
+            modifier = Modifier.testTag("saved_timer_session"),
+            onDismissRequest = { savedSession = null },
+            icon = { Icon(Icons.Default.CheckCircle, contentDescription = null) },
+            title = { Text(appText(R.string.copy_session_saved)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                    val client = clients.firstOrNull { it.id == entry.clientId }
+                    Text(
+                        android.text.format.DateUtils.formatElapsedTime(entry.rawDurationSeconds),
+                        style = MaterialTheme.typography.headlineMedium
+                    )
+                    Text(
+                        listOfNotNull(client?.name, displayDateFormatter.format(Date(entry.startTime)))
+                            .joinToString(" · ")
+                    )
+                    Text(formatCurrency(entry.amount, entry.currencyCode))
+                }
+            },
+            confirmButton = {
+                Button(onClick = { savedSession = null }, variant = AppAction.Quiet) {
+                    Text(appText(R.string.copy_done))
+                }
+            },
+            dismissButton = {
+                Button(onClick = {
+                    savedSession = null
+                    editingEntry = entry
+                }, variant = AppAction.Quiet) {
+                    Text(appText(R.string.copy_edit_record))
+                }
+            }
+        )
+    }
+
     // --- Edit Record Dialog ---
     editingEntry?.let { entry ->
-        val editDateFormatter = remember { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()) }
-        val editTimeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+        val editDateFormatter = remember { SimpleDateFormat("dd.MM.yyyy", appLocale()) }
+        val editTimeFormatter = remember { SimpleDateFormat("HH:mm", appLocale()) }
 
         val calendar = Calendar.getInstance().apply { timeInMillis = entry.startTime }
         var editDateMs by rememberSaveable { mutableStateOf(entry.startTime) }
@@ -894,17 +961,18 @@ fun RecordsScreen(
         var selectedClientEditId by rememberSaveable { mutableStateOf(entry.clientId) }
         var selectedStatus by rememberSaveable { mutableStateOf(entry.status) }
 
+        var applyCurrentRate by rememberSaveable { mutableStateOf(false) }
         var durationError by rememberSaveable { mutableStateOf(false) }
         var clientDropdownExpanded by rememberSaveable { mutableStateOf(false) }
 
-        val displayDateFormatter = remember { SimpleDateFormat("d MMMM, yyyy", Locale.forLanguageTag("ru")) }
-        val formattedTime = String.format(Locale.US, "%02d:%02d", editHours, editMinutes)
+        val displayDateFormatter = remember { SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(appLocale(), "yMMMMd"), appLocale()) }
+        val formattedTime = formatClockTime(editHours, editMinutes)
 
         if (showEditTimePicker) {
             val timePickerState = rememberTimePickerState(
                 initialHour = editHours,
                 initialMinute = editMinutes,
-                is24Hour = true
+                is24Hour = android.text.format.DateFormat.is24HourFormat(androidx.compose.ui.platform.LocalContext.current)
             )
             
             TimePickerDialog(
@@ -918,7 +986,7 @@ fun RecordsScreen(
                         },
                         variant = AppAction.Quiet
                     ) {
-                        Text("Готово")
+                        Text(appText(R.string.copy_done))
                     }
                 },
                 dismissButton = {
@@ -926,7 +994,7 @@ fun RecordsScreen(
                         onClick = { showEditTimePicker = false },
                         variant = AppAction.Quiet
                     ) {
-                        Text("Отмена")
+                        Text(appText(R.string.copy_cancel))
                     }
                 }
             ) {
@@ -939,40 +1007,10 @@ fun RecordsScreen(
         }
 
         if (showEditDurationPicker) {
-            val durationPickerState = rememberTimePickerState(
-                initialHour = editDurationHours,
-                initialMinute = editDurationMinutes,
-                is24Hour = true
-            )
-            
-            TimePickerDialog(
-                onDismissRequest = { showEditDurationPicker = false },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            editDurationHours = durationPickerState.hour
-                            editDurationMinutes = durationPickerState.minute
-                            showEditDurationPicker = false
-                        },
-                        variant = AppAction.Quiet
-                    ) {
-                        Text("Готово")
-                    }
-                },
-                dismissButton = {
-                    Button(
-                        onClick = { showEditDurationPicker = false },
-                        variant = AppAction.Quiet
-                    ) {
-                        Text("Отмена")
-                    }
-                }
-            ) {
-                MaterialTheme(
-                    typography = MaterialTheme.typography
-                ) {
-                    com.example.ui.theme.AppTimePicker(state = durationPickerState)
-                }
+            AppDurationPickerDialog(editDurationHours, editDurationMinutes, { showEditDurationPicker = false }) { pickedHours, pickedMinutes ->
+                editDurationHours = pickedHours
+                editDurationMinutes = pickedMinutes
+                showEditDurationPicker = false
             }
         }
 
@@ -993,7 +1031,7 @@ fun RecordsScreen(
                 ) {
                     // Header with Title
                     Text(
-                        text = "Редактировать запись",
+                        text = appText(R.string.copy_edit_record),
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.fillMaxWidth()
@@ -1002,7 +1040,7 @@ fun RecordsScreen(
                         // Date and Start Time Button Combined
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                             Text(
-                                text = "Начало работы",
+                                text = appText(R.string.copy_start_of_work),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1020,12 +1058,12 @@ fun RecordsScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.DateRange,
-                                    contentDescription = "Изменить дату и время",
+                                    contentDescription = appText(R.string.copy_change_date_and_time),
                                     modifier = Modifier.size(AppSpacing.page)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "${displayDateFormatter.format(Date(editDateMs))} в $formattedTime",
+                                    text = appText(R.string.copy_text_1_at_2, displayDateFormatter.format(Date(editDateMs)), formattedTime),
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1035,7 +1073,7 @@ fun RecordsScreen(
                         // Duration Picker Button (looks like work time in save session)
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                             Text(
-                                text = "Длительность работы",
+                                text = appText(R.string.copy_work_duration),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1049,12 +1087,12 @@ fun RecordsScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Schedule,
-                                    contentDescription = "Изменить длительность",
+                                    contentDescription = appText(R.string.copy_change_duration),
                                     modifier = Modifier.size(AppSpacing.page)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "Время работы: $formattedDuration",
+                                    text = appText(R.string.copy_time_worked_1, formattedDuration),
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1065,7 +1103,7 @@ fun RecordsScreen(
                         OutlinedTextField(
                             value = commentInput,
                             onValueChange = { commentInput = it },
-                            label = { Text("Комментарий") },
+                            label = { Text(appText(R.string.copy_comment)) },
                             modifier = Modifier.keepFocusedFieldVisible().fillMaxWidth().testTag("edit_comment_input"),
                             shape = MaterialTheme.shapes.medium,
                             colors = OutlinedTextFieldDefaults.colors(
@@ -1080,7 +1118,7 @@ fun RecordsScreen(
 
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                             Text(
-                                text = "Заказчик",
+                                text = appText(R.string.copy_client_2),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1089,7 +1127,7 @@ fun RecordsScreen(
                                     .fillMaxWidth()
                             ) {
                                 com.example.ui.theme.AppClientField(
-                                    value = client?.name ?: "Выберите заказчика",
+                                    value = client?.name ?: appText(R.string.copy_choose_a_client),
                                     color = client?.colorHex?.let { safeParseColor(it) } ?: MaterialTheme.colorScheme.primary,
                                     onClick = { clientDropdownExpanded = true }, modifier = Modifier.testTag("client_selector_field"))
                             }
@@ -1098,7 +1136,7 @@ fun RecordsScreen(
                         // Status Selection with chips
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = "Статус оплаты",
+                                text = appText(R.string.copy_payment_status),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1109,9 +1147,9 @@ fun RecordsScreen(
                                 TimeEntryStatus.values().forEach { status ->
                                     val isSelected = selectedStatus == status
                                     val label = when (status) {
-                                        TimeEntryStatus.PAID -> "Оплачено"
-                                        TimeEntryStatus.INVOICED -> "Счёт выставлен"
-                                        TimeEntryStatus.NOT_PAID -> "Не оплачен"
+                                        TimeEntryStatus.PAID -> appText(R.string.copy_paid_2)
+                                        TimeEntryStatus.INVOICED -> appText(R.string.copy_invoiced)
+                                        TimeEntryStatus.NOT_PAID -> appText(R.string.copy_unpaid)
                                     }
                                     
                                     FilterChip(
@@ -1131,12 +1169,21 @@ fun RecordsScreen(
                         }
 
                         val editTargetClient = clients.find { it.id == selectedClientEditId }
-                        val editRate = editTargetClient?.defaultHourlyRate?.takeIf { it > 0.0 } ?: settings.globalHourlyRate
+                        val currentBilling = settings.billingRate(editTargetClient)
+                        val editRate = if (applyCurrentRate) currentBilling.amount else entry.appliedRate
+                        val editCurrency = if (applyCurrentRate) currentBilling.currencyCode else entry.currencyCode
                         val editTotalDurationHours = (editDurationHours * 60 + editDurationMinutes) / 60.0
                         val editCalculatedAmount = settings.roundAmount(editTotalDurationHours * editRate)
 
+                        com.example.ui.theme.AppSettingsRow(
+                            appText(R.string.recalculate_with_current_rate),
+                            appText(R.string.rate_preview, formatCurrency(editRate, editCurrency),
+                                formatCurrency(editCalculatedAmount, editCurrency)),
+                            onClick = { applyCurrentRate = !applyCurrentRate },
+                            trailingContent = { Switch(checked = applyCurrentRate, onCheckedChange = null) }
+                        )
                         if (editRate <= 0.0 || editCalculatedAmount <= 0.0) {
-                            com.example.ui.theme.AppInfoMessage("Сумма записи будет 0. Проверьте ставку и время работы.")
+                            com.example.ui.theme.AppInfoMessage(appText(R.string.copy_this_record_will_have_a_zero_amount))
                         }
 
                         Spacer(modifier = Modifier.height(AppSpacing.sm))
@@ -1149,9 +1196,9 @@ fun RecordsScreen(
                                 .heightIn(min = AppSize.touchTarget),
                             variant = AppAction.DestructiveQuiet
                         ) {
-                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Удалить", modifier = Modifier.size(18.dp))
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = appText(R.string.copy_delete), modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(AppSpacing.sm))
-                            Text("Удалить запись", fontWeight = FontWeight.Bold)
+                            Text(appText(R.string.copy_delete_record), fontWeight = FontWeight.Bold)
                         }
 
                         // Row of Cancel and Save (aligned by width, equal space)
@@ -1163,7 +1210,7 @@ fun RecordsScreen(
                                     .heightIn(min = AppSize.touchTarget),
                                 variant = AppAction.Quiet
                             ) {
-                                Text("Отмена")
+                                Text(appText(R.string.copy_cancel))
                             }
 
                             val totalDurationMinutes = editDurationHours * 60 + editDurationMinutes
@@ -1192,7 +1239,7 @@ fun RecordsScreen(
                                             endTime = newEndTime,
                                             comment = commentInput.ifBlank { null },
                                             status = selectedStatus,
-                                            recalculateWithCurrentClientRate = false,
+                                            recalculateWithCurrentClientRate = applyCurrentRate,
                                             currentClientRate = currentRate
                                         )
 
@@ -1204,7 +1251,7 @@ fun RecordsScreen(
                                     .weight(1f)
                                     .heightIn(min = AppSize.touchTarget)
                             ) {
-                                Text("Сохранить", fontWeight = FontWeight.Bold)
+                                Text(appText(R.string.copy_save), fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -1224,7 +1271,7 @@ fun RecordsScreen(
 
     statusDropdownEntry?.let { entry ->
         AppChoiceSheet(
-            title = "Статус оплаты",
+            title = appText(R.string.copy_payment_status),
             options = paymentStatusChoices,
             selected = entry.status,
             onSelect = { status ->
@@ -1239,9 +1286,9 @@ fun RecordsScreen(
     showDeleteConfirmDialog?.let { entry ->
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = null },
-            title = { Text("Удалить запись?") },
+            title = { Text(appText(R.string.copy_delete_this_record)) },
             text = {
-                Text("Вы действительно хотите удалить эту запись? Данное действие необратимо.")
+                Text(appText(R.string.copy_permanently_delete_this_record))
             },
             confirmButton = {
                 Button(
@@ -1252,7 +1299,7 @@ fun RecordsScreen(
                     },
                     variant = AppAction.Destructive
                 ) {
-                    Text("Удалить")
+                    Text(appText(R.string.copy_delete))
                 }
             },
             dismissButton = {
@@ -1260,7 +1307,7 @@ fun RecordsScreen(
                     onClick = { showDeleteConfirmDialog = null },
                     variant = AppAction.Quiet
                 ) {
-                    Text("Отмена")
+                    Text(appText(R.string.copy_cancel))
                 }
             },
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -1270,7 +1317,7 @@ fun RecordsScreen(
 
     // --- Manual Add Entry Dialog ---
     if (showManualAddDialog) {
-        val displayFormatter = remember { SimpleDateFormat("d MMMM, yyyy", Locale.forLanguageTag("ru")) }
+        val displayFormatter = remember { SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(appLocale(), "yMMMMd"), appLocale()) }
 
         var manualDropdownExpanded by rememberSaveable { mutableStateOf(false) }
 
@@ -1278,13 +1325,13 @@ fun RecordsScreen(
         var manualStartHours by rememberSaveable { mutableStateOf(calNow.get(Calendar.HOUR_OF_DAY)) }
         var manualStartMinutes by rememberSaveable { mutableStateOf(calNow.get(Calendar.MINUTE)) }
         var showManualStartTimePicker by rememberSaveable { mutableStateOf(false) }
-        val formattedStartTime = String.format(Locale.US, "%02d:%02d", manualStartHours, manualStartMinutes)
+        val formattedStartTime = formatClockTime(manualStartHours, manualStartMinutes)
 
         if (showManualStartTimePicker) {
             val startTimePickerState = rememberTimePickerState(
                 initialHour = manualStartHours,
                 initialMinute = manualStartMinutes,
-                is24Hour = true
+                is24Hour = android.text.format.DateFormat.is24HourFormat(androidx.compose.ui.platform.LocalContext.current)
             )
             
             TimePickerDialog(
@@ -1298,7 +1345,7 @@ fun RecordsScreen(
                         },
                         variant = AppAction.Quiet
                     ) {
-                        Text("Готово")
+                        Text(appText(R.string.copy_done))
                     }
                 },
                 dismissButton = {
@@ -1306,7 +1353,7 @@ fun RecordsScreen(
                         onClick = { showManualStartTimePicker = false },
                         variant = AppAction.Quiet
                     ) {
-                        Text("Отмена")
+                        Text(appText(R.string.copy_cancel))
                     }
                 }
             ) {
@@ -1319,40 +1366,10 @@ fun RecordsScreen(
         }
 
         if (manualShowTimePicker) {
-            val timePickerState = rememberTimePickerState(
-                initialHour = manualHours,
-                initialMinute = manualMinutes,
-                is24Hour = true
-            )
-            
-            TimePickerDialog(
-                onDismissRequest = { manualShowTimePicker = false },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            manualHours = timePickerState.hour
-                            manualMinutes = timePickerState.minute
-                            manualShowTimePicker = false
-                        },
-                        variant = AppAction.Quiet
-                    ) {
-                        Text("Готово")
-                    }
-                },
-                dismissButton = {
-                    Button(
-                        onClick = { manualShowTimePicker = false },
-                        variant = AppAction.Quiet
-                    ) {
-                        Text("Отмена")
-                    }
-                }
-            ) {
-                MaterialTheme(
-                    typography = MaterialTheme.typography
-                ) {
-                    com.example.ui.theme.AppTimePicker(state = timePickerState)
-                }
+            AppDurationPickerDialog(manualHours, manualMinutes, { manualShowTimePicker = false }) { pickedHours, pickedMinutes ->
+                manualHours = pickedHours
+                manualMinutes = pickedMinutes
+                manualShowTimePicker = false
             }
         }
 
@@ -1373,14 +1390,14 @@ fun RecordsScreen(
                 ) {
                     // Header with Title
                     Text(
-                        text = "Добавить запись",
+                        text = appText(R.string.copy_add_record),
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (clients.isEmpty()) {
                         Text(
-                            text = "Пожалуйста, сначала создайте хотя бы одного заказчика на вкладке 'Заказчики'.",
+                            text = appText(R.string.copy_add_a_client_in_the_clients_tab),
                             color = MaterialTheme.colorScheme.tertiary,
                             style = MaterialTheme.typography.bodyMedium
                         )
@@ -1389,7 +1406,7 @@ fun RecordsScreen(
                         // Combined Date and Start Time Button
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                             Text(
-                                text = "Начало работы",
+                                text = appText(R.string.copy_start_of_work),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1407,12 +1424,12 @@ fun RecordsScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.DateRange,
-                                    contentDescription = "Изменить дату и время",
+                                    contentDescription = appText(R.string.copy_change_date_and_time),
                                     modifier = Modifier.size(AppSpacing.page)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "${displayFormatter.format(Date(manualDateMs))} в $formattedStartTime",
+                                    text = appText(R.string.copy_text_1_at_2, displayFormatter.format(Date(manualDateMs)), formattedStartTime),
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1422,7 +1439,7 @@ fun RecordsScreen(
                         // Duration Picker Button (looks like work time in save session)
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                             Text(
-                                text = "Длительность работы",
+                                text = appText(R.string.copy_work_duration),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1436,12 +1453,12 @@ fun RecordsScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Schedule,
-                                    contentDescription = "Изменить длительность",
+                                    contentDescription = appText(R.string.copy_change_duration),
                                     modifier = Modifier.size(AppSpacing.page)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "Время работы: $formattedTime",
+                                    text = appText(R.string.copy_time_worked_1, formattedTime),
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -1452,8 +1469,8 @@ fun RecordsScreen(
                         OutlinedTextField(
                             value = manualComment,
                             onValueChange = { manualComment = it },
-                            label = { Text("Описание выполненных работ") },
-                            placeholder = { Text("Напр., Правка багов, Рефакторинг") },
+                            label = { Text(appText(R.string.copy_work_description)) },
+                            placeholder = { Text(appText(R.string.copy_for_example_bug_fixes_or_refactoring)) },
                             modifier = Modifier.keepFocusedFieldVisible()
                                 .fillMaxWidth()
                                 .testTag("dialog_manual_comment_input"),
@@ -1472,12 +1489,12 @@ fun RecordsScreen(
                         val manualCalculatedAmount = settings.roundAmount(manualDurationHours * manualRate)
 
                         if (manualRate <= 0.0 || manualCalculatedAmount <= 0.0) {
-                            com.example.ui.theme.AppInfoMessage("Сумма записи будет 0. Проверьте ставку и время работы.")
+                            com.example.ui.theme.AppInfoMessage(appText(R.string.copy_this_record_will_have_a_zero_amount))
                         }
 
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                             Text(
-                                text = "Заказчик",
+                                text = appText(R.string.copy_client_2),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1486,7 +1503,7 @@ fun RecordsScreen(
                                     .fillMaxWidth()
                             ) {
                                 com.example.ui.theme.AppClientField(
-                                    value = client?.name ?: "Выберите заказчика",
+                                    value = client?.name ?: appText(R.string.copy_choose_a_client),
                                     color = client?.colorHex?.let { safeParseColor(it) } ?: MaterialTheme.colorScheme.primary,
                                     onClick = { manualDropdownExpanded = true }, modifier = Modifier.testTag("client_selector_field"))
                             }
@@ -1503,7 +1520,7 @@ fun RecordsScreen(
                                     .heightIn(min = AppSize.touchTarget),
                                 variant = AppAction.Quiet
                             ) {
-                                Text("Отмена")
+                                Text(appText(R.string.copy_cancel))
                             }
 
                             Button(
@@ -1542,7 +1559,7 @@ fun RecordsScreen(
                                     .weight(1f)
                                     .heightIn(min = AppSize.touchTarget)
                             ) {
-                                Text("Сохранить", fontWeight = FontWeight.Bold)
+                                Text(appText(R.string.copy_save), fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -1588,12 +1605,12 @@ fun RecordsScreen(
                 verticalArrangement = Arrangement.spacedBy(AppSpacing.page)
             ) {
                 // Title Header
-                com.example.ui.theme.AppSheetHeader("Фильтры и сортировка", { showFilterBottomSheet = false })
+                com.example.ui.theme.AppSheetHeader(appText(R.string.copy_filters_and_sorting), { showFilterBottomSheet = false })
 
                 // SORTING SECTION
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                     Text(
-                        text = "Сортировка записей",
+                        text = appText(R.string.copy_sort_records),
                         style = LedgerStyles.UppercaseSectionHeader,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1603,8 +1620,8 @@ fun RecordsScreen(
                         verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)
                     ) {
                         listOf(
-                            SortOrder.TIME_DESC to "Новые",
-                            SortOrder.TIME_ASC to "Старые"
+                            SortOrder.TIME_DESC to appText(R.string.copy_newest_first),
+                            SortOrder.TIME_ASC to appText(R.string.copy_oldest_first)
                         ).forEach { (order, label) ->
                             val isSel = tempSortOrder == order
                             FilterChip(
@@ -1620,7 +1637,7 @@ fun RecordsScreen(
                 // PERIOD SECTION
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                     Text(
-                        text = "Временной период",
+                        text = appText(R.string.copy_time_period),
                         style = LedgerStyles.UppercaseSectionHeader,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1630,10 +1647,10 @@ fun RecordsScreen(
                         verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)
                     ) {
                         listOf(
-                            "ALL" to "Все",
-                            "WEEK" to "Неделя",
-                            "MONTH" to "Месяц",
-                            "CUSTOM" to "Свой"
+                            "ALL" to appText(R.string.copy_all),
+                            "WEEK" to appText(R.string.copy_week),
+                            "MONTH" to appText(R.string.copy_month),
+                            "CUSTOM" to appText(R.string.copy_custom)
                         ).forEach { (p, label) ->
                             val isSel = tempPeriod == p
                             FilterChip(
@@ -1646,7 +1663,7 @@ fun RecordsScreen(
                     }
 
                     if (tempPeriod == "CUSTOM") {
-                        val fmt = remember { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()) }
+                        val fmt = remember { SimpleDateFormat("dd.MM.yyyy", appLocale()) }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(AppSpacing.lg),
@@ -1655,13 +1672,13 @@ fun RecordsScreen(
                             OutlinedTextField(
                                 value = fmt.format(Date(tempStartDate)),
                                 onValueChange = {},
-                                label = { Text("Начало") },
+                                label = { Text(appText(R.string.copy_from)) },
                                 readOnly = true,
                                 trailingIcon = {
                                     IconButton(onClick = {
                                         showDatePicker(tempStartDate) { tempStartDate = it }
                                     }) {
-                                        Icon(Icons.Default.DateRange, contentDescription = "Выбрать дату")
+                                        Icon(Icons.Default.DateRange, contentDescription = appText(R.string.copy_select_date))
                                     }
                                 },
                                 modifier = Modifier.keepFocusedFieldVisible().weight(1f),
@@ -1670,13 +1687,13 @@ fun RecordsScreen(
                             OutlinedTextField(
                                 value = fmt.format(Date(tempEndDate)),
                                 onValueChange = {},
-                                label = { Text("Конец") },
+                                label = { Text(appText(R.string.copy_to)) },
                                 readOnly = true,
                                 trailingIcon = {
                                     IconButton(onClick = {
                                         showDatePicker(tempEndDate) { tempEndDate = it }
                                     }) {
-                                        Icon(Icons.Default.DateRange, contentDescription = "Выбрать дату")
+                                        Icon(Icons.Default.DateRange, contentDescription = appText(R.string.copy_select_date))
                                     }
                                 },
                                 modifier = Modifier.keepFocusedFieldVisible().weight(1f),
@@ -1689,7 +1706,7 @@ fun RecordsScreen(
                 // STATUS SECTION
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                     Text(
-                        text = "Статус оплаты",
+                        text = appText(R.string.copy_payment_status),
                         style = LedgerStyles.UppercaseSectionHeader,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1700,9 +1717,9 @@ fun RecordsScreen(
                     ) {
                         TimeEntryStatus.values().forEach { status ->
                             val label = when (status) {
-                                TimeEntryStatus.PAID -> "Оплачено"
-                                TimeEntryStatus.INVOICED -> "Счёт выставлен"
-                                TimeEntryStatus.NOT_PAID -> "Не оплачен"
+                                TimeEntryStatus.PAID -> appText(R.string.copy_paid_2)
+                                TimeEntryStatus.INVOICED -> appText(R.string.copy_invoiced)
+                                TimeEntryStatus.NOT_PAID -> appText(R.string.copy_unpaid)
                             }
                             val isSel = tempStatuses.contains(status)
                             FilterChip(
@@ -1724,7 +1741,7 @@ fun RecordsScreen(
                 // CLIENT SELECTION
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                     Text(
-                        text = "Заказчики",
+                        text = appText(R.string.copy_clients),
                         style = LedgerStyles.UppercaseSectionHeader,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1732,11 +1749,11 @@ fun RecordsScreen(
                     OutlinedTextField(
                         value = clientSearchQuery,
                         onValueChange = { clientSearchQuery = it },
-                        placeholder = { Text("Поиск заказчика...", style = MaterialTheme.typography.bodyMedium) },
+                        placeholder = { Text(appText(R.string.copy_search_clients), style = MaterialTheme.typography.bodyMedium) },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(AppSize.smallIcon)) },
                         trailingIcon = {
                             if (clientSearchQuery.isNotEmpty()) {
-                                AppIconAction("Очистить поиск", Icons.Default.Close, { clientSearchQuery = "" })
+                                AppIconAction(appText(R.string.copy_clear_search), Icons.Default.Close, { clientSearchQuery = "" })
                             }
                         },
                         modifier = Modifier.testTag("filter_client_search").keepFocusedFieldVisible().fillMaxWidth(),
@@ -1750,7 +1767,7 @@ fun RecordsScreen(
 
                     if (filteredClients.isEmpty()) {
                         Text(
-                            text = "Заказчики не найдены",
+                            text = appText(R.string.copy_no_clients_found),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = AppSpacing.sm)
@@ -1799,7 +1816,7 @@ fun RecordsScreen(
                         modifier = Modifier.weight(1f),
                         variant = AppAction.Quiet
                     ) {
-                        Text("Сбросить", fontWeight = FontWeight.Bold)
+                        Text(appText(R.string.copy_reset), fontWeight = FontWeight.Bold)
                     }
 
                     Button(
@@ -1816,7 +1833,7 @@ fun RecordsScreen(
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Применить", fontWeight = FontWeight.Bold)
+                        Text(appText(R.string.copy_apply), fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1828,7 +1845,6 @@ fun RecordsScreen(
         val selectedEntries = remember(entries, selectedEntryIds) {
             entries.filter { selectedEntryIds.contains(it.id) }
         }
-        val totalAmount = selectedEntries.sumOf { it.amount }
         val totalSeconds = selectedEntries.sumOf { it.durationSeconds }
         val hoursStr = String.format(Locale.US, "%.2f", totalSeconds / 3600.0)
 
@@ -1849,26 +1865,26 @@ fun RecordsScreen(
                     .padding(bottom = AppSpacing.xxl),
                 verticalArrangement = Arrangement.spacedBy(AppSpacing.page)
             ) {
-                com.example.ui.theme.AppSheetHeader("Отчёт по выбранным", {
+                com.example.ui.theme.AppSheetHeader(appText(R.string.copy_report_for_selected_records), {
                     showBulkExportBottomSheet = false
                     bulkExportSuccessCard = false
                 })
 
                 if (!bulkExportSuccessCard) {
                     com.example.ui.theme.AppLedgerSummary(
-                        "Выбрано записей: ${selectedEntries.size}", "$hoursStr ч",
-                        "${String.format(Locale.US, "%.2f", totalAmount)} ${settings.currency}"
+                        appText(R.string.copy_records_selected_1, selectedEntries.size), appText(R.string.copy_text_1_hr, hoursStr),
+                        formatCurrencyTotals(selectedEntries.currencyTotals(), settings.currency)
                     )
 
                     // FORMAT SELECTION
                     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                         Text(
-                            text = "Формат экспорта",
+                            text = appText(R.string.copy_export_format),
                             style = LedgerStyles.UppercaseSectionHeader,
                             color = MaterialTheme.colorScheme.primary
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
-                            listOf("XLSX" to "Excel (XLSX)", "PDF" to "Счёт (PDF)").forEach { (format, label) ->
+                            listOf("XLSX" to "Excel (XLSX)", "PDF" to appText(R.string.copy_invoice_pdf)).forEach { (format, label) ->
                                 FilterChip(selected = bulkExportFormat == format,
                                     onClick = { bulkExportFormat = format }, label = { Text(label) })
                             }
@@ -1879,7 +1895,7 @@ fun RecordsScreen(
                     if (bulkExportFormat == "XLSX") {
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                             Text(
-                                text = "Колонки таблицы",
+                                text = appText(R.string.copy_spreadsheet_columns),
                                 style = LedgerStyles.UppercaseSectionHeader,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -1890,7 +1906,7 @@ fun RecordsScreen(
                                     .background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.3f))
                                     .padding(AppSpacing.sm)
                             ) {
-                                XlsxColumn.values().forEach { col ->
+                                XlsxColumn.entries.filter { it != XlsxColumn.CURRENCY }.forEach { col ->
                                     val isChecked = bulkExportSelectedXlsxColumns.contains(col)
                                     AppCheckboxRow(
                                         checked = isChecked,
@@ -1901,10 +1917,11 @@ fun RecordsScreen(
                                         modifier = Modifier.testTag("bulk_column_${col.name}")
                                     ) {
                                         val colLabel = when (col) {
-                                            XlsxColumn.DATE -> "Дата"
-                                            XlsxColumn.CLIENT -> "Заказчик"
-                                            XlsxColumn.COMMENT -> "Описание"
-                                            XlsxColumn.SUM -> "Сумма"
+                                            XlsxColumn.DATE -> appText(R.string.copy_date)
+                                            XlsxColumn.CLIENT -> appText(R.string.copy_client_2)
+                                            XlsxColumn.COMMENT -> appText(R.string.copy_description)
+                                            XlsxColumn.SUM -> appText(R.string.copy_amount)
+                                            XlsxColumn.CURRENCY -> appText(R.string.copy_currency)
                                         }
                                         Text(
                                             text = colLabel,
@@ -1926,18 +1943,18 @@ fun RecordsScreen(
                                 try {
 
                             if (selectedEntries.isEmpty()) {
-                                android.widget.Toast.makeText(context, "Нет выбранных записей!", android.widget.Toast.LENGTH_SHORT).show()
+                                android.widget.Toast.makeText(context, appText(R.string.copy_select_at_least_one_record), android.widget.Toast.LENGTH_SHORT).show()
                                 return@launch
                             }
 
-                            val dateString = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+                            val dateString = SimpleDateFormat("yyyyMMdd_HHmm", appLocale()).format(Date())
                             val distinctClientIds = selectedEntries.map { it.clientId }.distinct()
                             val clientNames = if (distinctClientIds.size == 1) {
-                                clients.find { it.id == distinctClientIds.first() }?.name ?: "Выбранные записи"
+                                clients.find { it.id == distinctClientIds.first() }?.name ?: appText(R.string.copy_selected_records)
                             } else {
-                                "Выбранные записи (${distinctClientIds.size} заказч.)"
+                                appText(R.string.copy_selected_records_1_clients, distinctClientIds.size)
                             }
-                            val dateFmt = SimpleDateFormat("dd.MM.yy", Locale.getDefault())
+                            val dateFmt = SimpleDateFormat("dd.MM.yy", appLocale())
                             val minDate = selectedEntries.minOfOrNull { it.startTime } ?: System.currentTimeMillis()
                             val maxDate = selectedEntries.maxOfOrNull { it.startTime } ?: System.currentTimeMillis()
                             val periodLabel = if (dateFmt.format(Date(minDate)) == dateFmt.format(Date(maxDate))) {
@@ -1988,7 +2005,7 @@ fun RecordsScreen(
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Exception) {
-                                    android.widget.Toast.makeText(context, "Не удалось создать отчёт: ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                                    android.widget.Toast.makeText(context, appText(R.string.copy_could_not_create_the_report_1, error.localizedMessage), android.widget.Toast.LENGTH_LONG).show()
                                 } finally {
                                     isExporting = false
                                 }
@@ -1998,9 +2015,9 @@ fun RecordsScreen(
                             .fillMaxWidth()
                             .heightIn(min = AppSize.primaryAction)
                     ) {
-                        Icon(imageVector = Icons.Default.Assessment, contentDescription = "Экспортировать")
+                        Icon(imageVector = Icons.Default.Assessment, contentDescription = appText(R.string.copy_export))
                         Spacer(modifier = Modifier.width(AppSpacing.sm))
-                        Text("Создать отчёт", fontWeight = FontWeight.Bold)
+                        Text(appText(R.string.copy_create_report), fontWeight = FontWeight.Bold)
                     }
                 } else {
                     // Success View Card
@@ -2018,7 +2035,7 @@ fun RecordsScreen(
                             modifier = Modifier.size(52.dp)
                         )
                         Text(
-                            text = "Отчёт готов",
+                            text = appText(R.string.copy_report_ready),
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -2051,17 +2068,17 @@ fun RecordsScreen(
                                                 putExtra(Intent.EXTRA_STREAM, uri)
                                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                             }
-                                            context.startActivity(Intent.createChooser(intent, "Поделиться отчётом"))
+                                            context.startActivity(Intent.createChooser(intent, appText(R.string.copy_share_report)))
                                         }
                                     } catch (cancelled: CancellationException) { throw cancelled } catch (e: Exception) {
-                                        android.widget.Toast.makeText(context, "Ошибка при шаринге: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                                        android.widget.Toast.makeText(context, appText(R.string.copy_could_not_share_the_file_1, e.message), android.widget.Toast.LENGTH_SHORT).show()
                                     }
 
 } },
                                 modifier = Modifier.size(AppSize.touchTarget),
                                 shape = MaterialTheme.shapes.medium
                             ) {
-                                Icon(imageVector = Icons.Default.Share, contentDescription = "Поделиться")
+                                Icon(imageVector = Icons.Default.Share, contentDescription = appText(R.string.copy_share))
                             }
 
                             Button(
@@ -2072,7 +2089,7 @@ fun RecordsScreen(
                             ) {
                                 Icon(imageVector = Icons.Default.Save, contentDescription = null)
                                 Spacer(modifier = Modifier.width(AppSpacing.sm))
-                                Text("Сохранить в файлы", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                Text(appText(R.string.copy_save_to_files), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -2102,18 +2119,18 @@ fun RecordsScreen(
                 verticalArrangement = Arrangement.spacedBy(AppSpacing.page)
             ) {
                 // Title Header
-                com.example.ui.theme.AppSheetHeader("Экспорт отчётов", { showExportBottomSheet = false; showExportSuccessCard = false; generatedFileBytes = null })
+                com.example.ui.theme.AppSheetHeader(appText(R.string.copy_export_reports), { showExportBottomSheet = false; showExportSuccessCard = false; generatedFileBytes = null })
 
                 if (!showExportSuccessCard) {
                     // FORMAT SELECTION
                     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                         Text(
-                            text = "Формат экспорта",
+                            text = appText(R.string.copy_export_format),
                             style = LedgerStyles.UppercaseSectionHeader,
                             color = MaterialTheme.colorScheme.primary
                         )
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
-                            listOf("XLSX" to "Excel (XLSX)", "PDF" to "Счёт (PDF)").forEach { (format, label) ->
+                            listOf("XLSX" to "Excel (XLSX)", "PDF" to appText(R.string.copy_invoice_pdf)).forEach { (format, label) ->
                                 FilterChip(selected = exportFormat == format,
                                     onClick = { exportFormat = format }, label = { Text(label) })
                             }
@@ -2123,7 +2140,7 @@ fun RecordsScreen(
                     // PERIOD PRESET
                     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                         Text(
-                            text = "Период",
+                            text = appText(R.string.copy_period_2),
                             style = LedgerStyles.UppercaseSectionHeader,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -2132,10 +2149,10 @@ fun RecordsScreen(
                             horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)
                         ) {
                             listOf(
-                                "ALL" to "Все",
-                                "WEEK" to "Неделя",
-                                "MONTH" to "Месяц",
-                                "CUSTOM" to "Свой"
+                                "ALL" to appText(R.string.copy_all),
+                                "WEEK" to appText(R.string.copy_week),
+                                "MONTH" to appText(R.string.copy_month),
+                                "CUSTOM" to appText(R.string.copy_custom)
                             ).forEach { (p, label) ->
                                 val isSel = exportPeriodPreset == p
                                 FilterChip(
@@ -2148,7 +2165,7 @@ fun RecordsScreen(
                         }
 
                         if (exportPeriodPreset == "CUSTOM") {
-                            val fmt = remember { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()) }
+                            val fmt = remember { SimpleDateFormat("dd.MM.yyyy", appLocale()) }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(AppSpacing.lg),
@@ -2157,13 +2174,13 @@ fun RecordsScreen(
                                 OutlinedTextField(
                                     value = fmt.format(Date(exportCustomStartDate)),
                                     onValueChange = {},
-                                    label = { Text("Начало") },
+                                    label = { Text(appText(R.string.copy_from)) },
                                     readOnly = true,
                                     trailingIcon = {
                                         IconButton(onClick = {
                                             showDatePicker(exportCustomStartDate) { exportCustomStartDate = it }
                                         }) {
-                                            Icon(Icons.Default.DateRange, contentDescription = "Выбрать дату")
+                                            Icon(Icons.Default.DateRange, contentDescription = appText(R.string.copy_select_date))
                                         }
                                     },
                                     modifier = Modifier.keepFocusedFieldVisible().weight(1f),
@@ -2172,13 +2189,13 @@ fun RecordsScreen(
                                 OutlinedTextField(
                                     value = fmt.format(Date(exportCustomEndDate)),
                                     onValueChange = {},
-                                    label = { Text("Конец") },
+                                    label = { Text(appText(R.string.copy_to)) },
                                     readOnly = true,
                                     trailingIcon = {
                                         IconButton(onClick = {
                                             showDatePicker(exportCustomEndDate) { exportCustomEndDate = it }
                                         }) {
-                                            Icon(Icons.Default.DateRange, contentDescription = "Выбрать дату")
+                                            Icon(Icons.Default.DateRange, contentDescription = appText(R.string.copy_select_date))
                                         }
                                     },
                                     modifier = Modifier.keepFocusedFieldVisible().weight(1f),
@@ -2191,12 +2208,12 @@ fun RecordsScreen(
                     // CLIENT CHIPS/CHECKLIST FOR EXPORT
                     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                         Text(
-                            text = "Заказчики",
+                            text = appText(R.string.copy_clients),
                             style = LedgerStyles.UppercaseSectionHeader,
                             color = MaterialTheme.colorScheme.primary
                         )
                         if (clients.isEmpty()) {
-                            Text("Нет созданных заказчиков", style = MaterialTheme.typography.bodySmall)
+                            Text(appText(R.string.copy_no_clients_have_been_added), style = MaterialTheme.typography.bodySmall)
                         } else {
                             Row(
                                 modifier = Modifier
@@ -2208,7 +2225,7 @@ fun RecordsScreen(
                                 FilterChip(
                                     selected = allSelected,
                                     onClick = { exportSelectedClients.clear() },
-                                    label = { Text("Все заказчики") }
+                                    label = { Text(appText(R.string.copy_all_clients)) }
                                 )
                                 clients.forEach { c ->
                                     val isChecked = exportSelectedClients.contains(c.id)
@@ -2237,7 +2254,7 @@ fun RecordsScreen(
                     // STATUS FILTER FOR EXPORT
                     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                         Text(
-                            text = "Статусы оплаты",
+                            text = appText(R.string.copy_payment_statuses),
                             style = LedgerStyles.UppercaseSectionHeader,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -2250,9 +2267,9 @@ fun RecordsScreen(
                             TimeEntryStatus.values().forEach { status ->
                                 val isChecked = exportSelectedStatuses.contains(status)
                                 val label = when (status) {
-                                    TimeEntryStatus.NOT_PAID -> "Не оплачен"
-                                    TimeEntryStatus.INVOICED -> "Счёт выставлен"
-                                    TimeEntryStatus.PAID -> "Оплачено"
+                                    TimeEntryStatus.NOT_PAID -> appText(R.string.copy_unpaid)
+                                    TimeEntryStatus.INVOICED -> appText(R.string.copy_invoiced)
+                                    TimeEntryStatus.PAID -> appText(R.string.copy_paid_2)
                                 }
                                 FilterChip(
                                     selected = isChecked,
@@ -2275,7 +2292,7 @@ fun RecordsScreen(
                     if (exportFormat == "XLSX") {
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                             Text(
-                                text = "Колонки таблицы",
+                                text = appText(R.string.copy_spreadsheet_columns),
                                 style = LedgerStyles.UppercaseSectionHeader,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -2285,13 +2302,14 @@ fun RecordsScreen(
                                 verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                XlsxColumn.values().filter { it != XlsxColumn.CLIENT }.forEach { col ->
+                                XlsxColumn.entries.filter { it != XlsxColumn.CLIENT && it != XlsxColumn.CURRENCY }.forEach { col ->
                                     val isChecked = exportSelectedXlsxColumns.contains(col)
                                     val label = when (col) {
-                                        XlsxColumn.DATE -> "Дата"
-                                        XlsxColumn.CLIENT -> "Заказчик"
-                                        XlsxColumn.COMMENT -> "Описание"
-                                        XlsxColumn.SUM -> "Сумма"
+                                        XlsxColumn.DATE -> appText(R.string.copy_date)
+                                        XlsxColumn.CLIENT -> appText(R.string.copy_client_2)
+                                        XlsxColumn.COMMENT -> appText(R.string.copy_description)
+                                        XlsxColumn.SUM -> appText(R.string.copy_amount)
+                                            XlsxColumn.CURRENCY -> appText(R.string.copy_currency)
                                     }
                                     FilterChip(
                                         selected = isChecked,
@@ -2352,30 +2370,30 @@ fun RecordsScreen(
                             }
 
                             if (filtered.isEmpty()) {
-                                android.widget.Toast.makeText(context, "Нет записей по выбранным критериям!", android.widget.Toast.LENGTH_SHORT).show()
+                                android.widget.Toast.makeText(context, appText(R.string.copy_no_records_match_your_selection), android.widget.Toast.LENGTH_SHORT).show()
                                 return@launch
                             }
 
-                            val dateString = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+                            val dateString = SimpleDateFormat("yyyyMMdd_HHmm", appLocale()).format(Date())
                             val clientNames = if (exportSelectedClients.isEmpty()) {
                                 val distinctClientIds = filtered.map { it.clientId }.distinct()
                                 if (distinctClientIds.size == 1) {
-                                    clients.find { it.id == distinctClientIds.first() }?.name ?: "Все заказчики"
+                                    clients.find { it.id == distinctClientIds.first() }?.name ?: appText(R.string.copy_all_clients)
                                 } else {
-                                    "Все заказчики"
+                                    appText(R.string.copy_all_clients)
                                 }
                             } else {
                                 clients.filter { exportSelectedClients.contains(it.id) }.joinToString { it.name }
                             }
                             val periodLabel = when (exportPeriodPreset) {
-                                "ALL" -> "За весь период"
-                                "WEEK" -> "За эту неделю"
-                                "MONTH" -> "За этот месяц"
+                                "ALL" -> appText(R.string.copy_all_time)
+                                "WEEK" -> appText(R.string.copy_current_week)
+                                "MONTH" -> appText(R.string.copy_current_month)
                                 "CUSTOM" -> {
-                                    val fmt = SimpleDateFormat("dd.MM.yy", Locale.getDefault())
+                                    val fmt = SimpleDateFormat("dd.MM.yy", appLocale())
                                     "${fmt.format(Date(exportCustomStartDate))} — ${fmt.format(Date(exportCustomEndDate))}"
                                 }
-                                else -> "За весь период"
+                                else -> appText(R.string.copy_all_time)
                             }
 
                             if (exportFormat == "XLSX") {
@@ -2419,7 +2437,7 @@ fun RecordsScreen(
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Exception) {
-                                    android.widget.Toast.makeText(context, "Не удалось создать отчёт: ${error.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                                    android.widget.Toast.makeText(context, appText(R.string.copy_could_not_create_the_report_1, error.localizedMessage), android.widget.Toast.LENGTH_LONG).show()
                                 } finally {
                                     isExporting = false
                                 }
@@ -2429,9 +2447,9 @@ fun RecordsScreen(
                             .fillMaxWidth()
                             .heightIn(min = AppSize.primaryAction)
                     ) {
-                        Icon(imageVector = Icons.Default.Assessment, contentDescription = "Экспортировать")
+                        Icon(imageVector = Icons.Default.Assessment, contentDescription = appText(R.string.copy_export))
                         Spacer(modifier = Modifier.width(AppSpacing.sm))
-                        Text("Создать отчёт", fontWeight = FontWeight.Bold)
+                        Text(appText(R.string.copy_create_report), fontWeight = FontWeight.Bold)
                     }
                 } else {
                     // Success View Card
@@ -2449,7 +2467,7 @@ fun RecordsScreen(
                             modifier = Modifier.size(52.dp)
                         )
                         Text(
-                            text = "Отчёт готов",
+                            text = appText(R.string.copy_report_ready),
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -2482,17 +2500,17 @@ fun RecordsScreen(
                                                 putExtra(Intent.EXTRA_STREAM, uri)
                                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                             }
-                                            context.startActivity(Intent.createChooser(intent, "Поделиться отчётом"))
+                                            context.startActivity(Intent.createChooser(intent, appText(R.string.copy_share_report)))
                                         }
                                     } catch (cancelled: CancellationException) { throw cancelled } catch (e: Exception) {
-                                        android.widget.Toast.makeText(context, "Ошибка при шаринге: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                                        android.widget.Toast.makeText(context, appText(R.string.copy_could_not_share_the_file_1, e.message), android.widget.Toast.LENGTH_SHORT).show()
                                     }
 
 } },
                                 modifier = Modifier.size(AppSize.touchTarget),
                                 shape = MaterialTheme.shapes.medium
                             ) {
-                                Icon(imageVector = Icons.Default.Share, contentDescription = "Поделиться")
+                                Icon(imageVector = Icons.Default.Share, contentDescription = appText(R.string.copy_share))
                             }
 
                             Button(
@@ -2503,7 +2521,7 @@ fun RecordsScreen(
                             ) {
                                 Icon(imageVector = Icons.Default.Save, contentDescription = null)
                                 Spacer(modifier = Modifier.width(AppSpacing.sm))
-                                Text("Сохранить в файлы", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                Text(appText(R.string.copy_save_to_files), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -2573,10 +2591,10 @@ fun getRecordsPluralString(count: Int): String {
     val mod10 = count % 10
     val mod100 = count % 100
     return when {
-        mod100 in 11..14 -> "$count записей"
-        mod10 == 1 -> "$count запись"
-        mod10 in 2..4 -> "$count записи"
-        else -> "$count записей"
+        mod100 in 11..14 -> appText(R.string.copy_text_1_records, count)
+        mod10 == 1 -> appText(R.string.copy_text_1_record, count)
+        mod10 in 2..4 -> appText(R.string.copy_text_1_records_2, count)
+        else -> appText(R.string.copy_text_1_records, count)
     }
 }
 
@@ -2603,7 +2621,7 @@ fun shareReportFile(context: android.content.Context, filePath: String, fileName
     try {
         val file = File(filePath)
         if (!file.exists()) {
-            android.widget.Toast.makeText(context, "Файл не найден на устройстве", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(context, appText(R.string.copy_file_not_found_on_this_device), android.widget.Toast.LENGTH_SHORT).show()
             return
         }
         val authority = "${context.packageName}.fileprovider"
@@ -2613,9 +2631,9 @@ fun shareReportFile(context: android.content.Context, filePath: String, fileName
             putExtra(Intent.EXTRA_STREAM, contentUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(shareIntent, "Скачать / Отправить отчёт"))
+        context.startActivity(Intent.createChooser(shareIntent, appText(R.string.copy_download_or_share_report)))
     } catch (e: Exception) {
-        android.widget.Toast.makeText(context, "Ошибка при открытии файла: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(context, appText(R.string.copy_could_not_open_the_file_1, e.message), android.widget.Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -2643,7 +2661,7 @@ fun ReportsHistoryBottomSheet(
             verticalArrangement = Arrangement.spacedBy(AppSpacing.page)
         ) {
             // Title Header (matching Export Reports)
-            com.example.ui.theme.AppSheetHeader("История отчётов", onDismiss)
+            com.example.ui.theme.AppSheetHeader(appText(R.string.copy_report_history), onDismiss)
 
             if (reports.isEmpty()) {
                 Column(
@@ -2668,12 +2686,12 @@ fun ReportsHistoryBottomSheet(
                         )
                     }
                     Text(
-                        text = "История отчётов пуста",
+                        text = appText(R.string.copy_no_reports_yet),
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Сгенерированные отчёты будут сохраняться здесь.",
+                        text = appText(R.string.copy_reports_you_create_will_appear_here),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -2707,7 +2725,7 @@ fun ReportItemCard(
     report: Report, currencySymbol: String, onShare: () -> Unit,
     onConfirmPayment: () -> Unit, onOpen: () -> Unit,
 ) {
-    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.forLanguageTag("ru")) }
+    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy, HH:mm", appLocale()) }
     val isPaid = report.status == ReportStatus.PAID
     Card(onClick = onOpen, modifier = Modifier.fillMaxWidth().testTag("report_${report.id}"),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
@@ -2718,18 +2736,18 @@ fun ReportItemCard(
             Text(report.clientNames, style = MaterialTheme.typography.titleMedium)
             Text(report.periodLabel, style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(formatCurrency(report.totalAmount, currencySymbol), style = LedgerStyles.MonospaceNumberMedium)
+            Text(formatCurrencyTotals(report.currencyTotals(currencySymbol), currencySymbol), style = LedgerStyles.NumberMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
-                Text(formatHours(report.totalDurationSeconds), style = LedgerStyles.MonospaceNumberSmall)
+                Text(formatHours(report.totalDurationSeconds), style = LedgerStyles.NumberSmall)
                 Text(getRecordsPluralString(report.entriesCount), style = MaterialTheme.typography.bodyMedium)
             }
-            com.example.ui.theme.AppStatusLabel(if (isPaid) "Оплачен" else "Счёт выставлен",
+            com.example.ui.theme.AppStatusLabel(if (isPaid) appText(R.string.copy_paid) else appText(R.string.copy_invoiced),
                 if (isPaid) LocalStatusPalette.current.paid else LocalStatusPalette.current.invoiced)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
-                Button(onClick = onShare, variant = AppAction.Quiet) { Text("Поделиться") }
+                Button(onClick = onShare, variant = AppAction.Quiet) { Text(appText(R.string.copy_share)) }
                 if (!isPaid) {
                     Button(onClick = onConfirmPayment, variant = AppAction.Secondary,
-                        modifier = Modifier.testTag("report_pay_${report.id}")) { Text("Подтвердить оплату") }
+                        modifier = Modifier.testTag("report_pay_${report.id}")) { Text(appText(R.string.copy_confirm_payment)) }
                 }
             }
         }
@@ -2756,7 +2774,7 @@ fun ConfirmPaymentDialog(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (error: SecurityException) {
-                android.widget.Toast.makeText(context, "Не удалось сохранить доступ к чеку. Выберите другой файл", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(context, appText(R.string.copy_could_not_keep_access_to_the_receipt), android.widget.Toast.LENGTH_LONG).show()
                 return@rememberLauncherForActivityResult
             }
             photoUriString = it.toString()
@@ -2768,7 +2786,7 @@ fun ConfirmPaymentDialog(
     var showReceipt by rememberSaveable(photoUriString) { mutableStateOf(false) }
 
     com.example.ui.theme.AppFormSheet(onDismiss = onDismiss) {
-                com.example.ui.theme.AppSheetHeader("Подтвердить оплату", onDismiss)
+                com.example.ui.theme.AppSheetHeader(appText(R.string.copy_confirm_payment), onDismiss)
 
                 // Info Summary - Flush to left, no card background
                 Column(
@@ -2793,7 +2811,7 @@ fun ConfirmPaymentDialog(
                     }
 
                     Text(
-                        text = formatCurrency(report.totalAmount, currencySymbol),
+                        text = formatCurrencyTotals(report.currencyTotals(currencySymbol), currencySymbol),
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -2802,14 +2820,14 @@ fun ConfirmPaymentDialog(
                 // Photo picker section
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                     Text(
-                        text = "Чек / Фото перевода (необязательно):",
+                        text = appText(R.string.copy_receipt_or_transfer_photo_optional),
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
 
                     if (photoPreview == ReceiptPreview.Loading) CircularProgressIndicator(
                         modifier = Modifier.size(AppSpacing.xl))
-                    if (photoPreview == ReceiptPreview.Unavailable) Text("Не удалось открыть чек. Выберите другой файл",
+                    if (photoPreview == ReceiptPreview.Unavailable) Text(appText(R.string.copy_could_not_open_the_receipt_choose_another),
                         color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                     if (imageBitmap != null) {
                         Box(
@@ -2822,8 +2840,8 @@ fun ConfirmPaymentDialog(
                         ) {
                             Image(
                                 bitmap = imageBitmap,
-                                contentDescription = "Чек оплаты",
-                                modifier = Modifier.fillMaxSize().clickable(role = Role.Button, onClickLabel = "Открыть чек") { showReceipt = true }
+                                contentDescription = appText(R.string.copy_payment_receipt),
+                                modifier = Modifier.fillMaxSize().clickable(role = Role.Button, onClickLabel = appText(R.string.copy_open_receipt)) { showReceipt = true }
                             )
                             ReceiptExpandHint()
                             IconButton(
@@ -2836,7 +2854,7 @@ fun ConfirmPaymentDialog(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "Удалить фото",
+                                    contentDescription = appText(R.string.copy_remove_photo),
                                     tint = Color.White,
                                     modifier = Modifier.size(AppSize.icon)
                                 )
@@ -2850,7 +2868,7 @@ fun ConfirmPaymentDialog(
                         ) {
                             Icon(imageVector = Icons.Default.AddPhotoAlternate, contentDescription = null)
                             Spacer(modifier = Modifier.width(AppSpacing.sm))
-                            Text("Приложить чек")
+                            Text(appText(R.string.copy_attach_receipt))
                         }
                     }
                 }
@@ -2862,7 +2880,7 @@ fun ConfirmPaymentDialog(
                         modifier = Modifier.heightIn(min = AppSize.touchTarget),
                         variant = AppAction.Quiet
                     ) {
-                        Text("Отмена", style = MaterialTheme.typography.labelLarge)
+                        Text(appText(R.string.copy_cancel), style = MaterialTheme.typography.labelLarge)
                     }
 
                     Button(
@@ -2873,13 +2891,13 @@ fun ConfirmPaymentDialog(
                             .weight(1f)
                             .heightIn(min = AppSize.touchTarget)
                     ) {
-                        Text("Подтвердить", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                        Text(appText(R.string.copy_confirm), style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                     }
                 }
 
                 // Notice text placed BELOW buttons, with dark/muted secondary color
                 Text(
-                    text = "Подтверждение перевода средств переведёт все записи этого отчёта в статус «Оплачен».",
+                    text = appText(R.string.copy_confirming_payment_marks_all_records_in_this),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -2900,7 +2918,7 @@ fun ReportDetailsDialog(
     onDelete: () -> Unit
 ) {
     val context = LocalContext.current
-    val dateFmt = remember { SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale.forLanguageTag("ru")) }
+    val dateFmt = remember { SimpleDateFormat("dd MMMM yyyy, HH:mm", appLocale()) }
 
     val includedEntryIds = remember(report.entryIdsJson) {
         val rawJson = report.entryIdsJson.trim().removePrefix("[").removeSuffix("]")
@@ -2927,13 +2945,13 @@ fun ReportDetailsDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Детали отчёта",
+                        text = appText(R.string.copy_report_details),
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     IconButton(onClick = onDismiss) {
-                        Icon(imageVector = Icons.Default.Close, contentDescription = "Закрыть")
+                        Icon(imageVector = Icons.Default.Close, contentDescription = appText(R.string.copy_close))
                     }
                 }
 
@@ -2956,13 +2974,13 @@ fun ReportDetailsDialog(
                         )
                         Column {
                             Text(
-                                text = if (isPaid) "Оплачен" else "Счёт выставлен",
+                                text = if (isPaid) appText(R.string.copy_paid) else appText(R.string.copy_invoiced),
                                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                                 color = if (isPaid) LocalStatusPalette.current.paid.content else LocalStatusPalette.current.invoiced.content
                             )
                             if (isPaid && report.paymentConfirmedAt != null) {
                                 Text(
-                                    text = "Оплачено: ${dateFmt.format(Date(report.paymentConfirmedAt))}",
+                                    text = appText(R.string.copy_paid_1, dateFmt.format(Date(report.paymentConfirmedAt))),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = LocalStatusPalette.current.paid.content
                                 )
@@ -2973,21 +2991,21 @@ fun ReportDetailsDialog(
 
                 // General Info
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Заказчик: ${report.clientNames}", fontWeight = FontWeight.SemiBold)
-                    Text("Период: ${report.periodLabel}", style = MaterialTheme.typography.bodyMedium)
-                    Text("Дата создания: ${dateFmt.format(Date(report.createdAt))}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Формат: ${report.exportFormat} (${report.fileName})", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Итоговая сумма: ${formatCurrency(report.totalAmount, currencySymbol)}", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                    Text(appText(R.string.copy_client_1, report.clientNames), fontWeight = FontWeight.SemiBold)
+                    Text(appText(R.string.copy_period_1, report.periodLabel), style = MaterialTheme.typography.bodyMedium)
+                    Text(appText(R.string.copy_created_1, dateFmt.format(Date(report.createdAt))), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(appText(R.string.copy_format_1_2, report.exportFormat, report.fileName), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(appText(R.string.copy_total_1, formatCurrencyTotals(report.currencyTotals(currencySymbol), currencySymbol)), style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
                 }
 
                 if (paymentPreview == ReceiptPreview.Loading) CircularProgressIndicator(
                     modifier = Modifier.size(AppSpacing.xl))
-                if (paymentPreview == ReceiptPreview.Unavailable) Text("Чек недоступен: файл перемещён или доступ отозван",
+                if (paymentPreview == ReceiptPreview.Unavailable) Text(appText(R.string.copy_receipt_unavailable_because_the_file_moved_or),
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                 // Payment receipt photo if present
                 if (paymentBitmap != null) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Чек / Фото перевода:", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                        Text(appText(R.string.copy_receipt_or_transfer_photo), style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2998,13 +3016,13 @@ fun ReportDetailsDialog(
                         ) {
                             Image(
                                 bitmap = paymentBitmap,
-                                contentDescription = "Чек перевода",
-                                modifier = Modifier.fillMaxSize().clickable(role = Role.Button, onClickLabel = "Открыть чек") { showReceipt = true }
+                                contentDescription = appText(R.string.copy_transfer_receipt),
+                                modifier = Modifier.fillMaxSize().clickable(role = Role.Button, onClickLabel = appText(R.string.copy_open_receipt)) { showReceipt = true }
                             )
                             ReceiptExpandHint()
                         }
                         if (!report.paymentNotes.isNullOrBlank()) {
-                            Text("Комментарий: ${report.paymentNotes}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(appText(R.string.copy_comment_1, report.paymentNotes), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -3013,7 +3031,7 @@ fun ReportDetailsDialog(
                 if (reportEntries.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                         Text(
-                            text = "Записи в отчёте (${reportEntries.size}):",
+                            text = appText(R.string.copy_records_in_this_report_1, reportEntries.size),
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                         )
                         reportEntries.forEach { entry ->
@@ -3029,7 +3047,7 @@ fun ReportDetailsDialog(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = entry.comment?.ifBlank { null } ?: "Без комментария",
+                                            text = entry.comment?.ifBlank { null } ?: appText(R.string.copy_no_comment),
                                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -3041,7 +3059,7 @@ fun ReportDetailsDialog(
                                         )
                                     }
                                     Text(
-                                        text = formatCurrency(entry.amount, currencySymbol),
+                                        text = formatCurrency(entry.amount, entry.currencyCode),
                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -3062,7 +3080,7 @@ fun ReportDetailsDialog(
                     ) {
                         Icon(imageVector = Icons.Default.Download, contentDescription = null)
                         Spacer(modifier = Modifier.width(AppSpacing.sm))
-                        Text("Поделиться отчётом")
+                        Text(appText(R.string.copy_share_report))
                     }
 
                     if (report.status == ReportStatus.INVOICED) {
@@ -3072,7 +3090,7 @@ fun ReportDetailsDialog(
                         ) {
                             Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null)
                             Spacer(modifier = Modifier.width(AppSpacing.sm))
-                            Text("Подтвердить оплату")
+                            Text(appText(R.string.copy_confirm_payment))
                         }
                     }
 
@@ -3083,7 +3101,7 @@ fun ReportDetailsDialog(
                     ) {
                         Icon(imageVector = Icons.Default.Delete, contentDescription = null)
                         Spacer(modifier = Modifier.width(AppSpacing.sm))
-                        Text("Удалить из истории")
+                        Text(appText(R.string.copy_remove_from_history))
                     }
                 }
                 }
@@ -3091,8 +3109,8 @@ fun ReportDetailsDialog(
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("Удалить отчёт из истории?") },
-            text = { Text("Запись об отчёте и сохранённый файл будут удалены из истории.") },
+            title = { Text(appText(R.string.copy_remove_this_report_from_history)) },
+            text = { Text(appText(R.string.copy_this_removes_the_report_and_its_saved)) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -3102,7 +3120,7 @@ fun ReportDetailsDialog(
                     },
                     variant = AppAction.Destructive
                 ) {
-                    Text("Удалить")
+                    Text(appText(R.string.copy_delete))
                 }
             },
             dismissButton = {
@@ -3110,7 +3128,7 @@ fun ReportDetailsDialog(
                     onClick = { showDeleteConfirm = false },
                     variant = AppAction.Quiet
                 ) {
-                    Text("Отмена")
+                    Text(appText(R.string.copy_cancel))
                 }
             }
         )

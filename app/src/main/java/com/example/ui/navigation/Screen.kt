@@ -1,5 +1,6 @@
 package com.example.ui.navigation
 
+import com.example.R
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.People
@@ -13,34 +14,34 @@ import androidx.compose.ui.graphics.vector.ImageVector
 
 sealed class Screen(
     val route: String,
-    val label: String,
+    val labelRes: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector
 ) {
     object Timer : Screen(
         route = "timer",
-        label = "Таймер",
+        labelRes = R.string.copy_timer,
         selectedIcon = Icons.Filled.Timer,
         unselectedIcon = Icons.Outlined.Timer
     )
 
     object Clients : Screen(
         route = "clients",
-        label = "Заказчики",
+        labelRes = R.string.copy_clients,
         selectedIcon = Icons.Filled.People,
         unselectedIcon = Icons.Outlined.People
     )
 
     object Records : Screen(
         route = "records",
-        label = "Записи",
+        labelRes = R.string.copy_records,
         selectedIcon = Icons.Filled.History,
         unselectedIcon = Icons.Outlined.History
     )
 
     object Settings : Screen(
         route = "settings",
-        label = "Настройки",
+        labelRes = R.string.copy_settings,
         selectedIcon = Icons.Filled.Settings,
         unselectedIcon = Icons.Outlined.Settings
     )

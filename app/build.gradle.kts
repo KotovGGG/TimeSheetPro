@@ -18,8 +18,8 @@ android {
     applicationId = "com.example"
     minSdk = 24
     targetSdk = 36
-    versionCode = providers.gradleProperty("appVersionCode").orElse("3").get().toInt()
-    versionName = "2.0.0"
+    versionCode = providers.gradleProperty("appVersionCode").orElse("8").get().toInt()
+    versionName = "2.1.4"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -66,6 +66,12 @@ android {
     debug {
       // Local preview is isolated from the user's installed application and data.
       applicationIdSuffix = ".preview"
+      signingConfig = signingConfigs.getByName("debug")
+    }
+    create("standalone") {
+      // A separate installation for devices that cannot update the original signed package.
+      initWith(getByName("release"))
+      applicationIdSuffix = ".standalone"
       signingConfig = signingConfigs.getByName("debug")
     }
   }

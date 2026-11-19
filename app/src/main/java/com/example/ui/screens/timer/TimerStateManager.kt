@@ -36,10 +36,14 @@ object TimerStateManager {
     private const val KEY_PENDING_SAVE_PAUSE_DURATION = "pendingSavePauseDuration"
     private const val KEY_SESSION_START_TIME = "sessionStartTime"
     private const val KEY_LAST_SELECTED_CLIENT_ID = "lastSelectedClientId"
+    private const val KEY_SAVED_NOTIFICATION_ENTRY = "savedNotificationEntry"
 
     private lateinit var prefs: SharedPreferences
+    private var notificationSaveInProgress = false
     private val _timerState = MutableStateFlow(TimerState())
     val timerState: StateFlow<TimerState> = _timerState.asStateFlow()
+    private val _savedNotificationEntry = MutableStateFlow<Long?>(null)
+    val savedNotificationEntry: StateFlow<Long?> = _savedNotificationEntry.asStateFlow()
 
     private val _widgetTick = MutableStateFlow(0L)
     val widgetTick: StateFlow<Long> = _widgetTick.asStateFlow()
@@ -60,6 +64,7 @@ object TimerStateManager {
         if (!::prefs.isInitialized) {
             prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             loadState()
+            _savedNotificationEntry.value = prefs.getLong(KEY_SAVED_NOTIFICATION_ENTRY, 0L).takeIf { it > 0 }
         }
     }
 
@@ -100,6 +105,7 @@ object TimerStateManager {
 
     @Synchronized
     fun start(clientId: Long? = null) {
+        if (notificationSaveInProgress) return
         val now = System.currentTimeMillis()
         val newState = TimerState(
             status = TimerStatus.RUNNING,
@@ -134,6 +140,7 @@ object TimerStateManager {
 
     @Synchronized
     fun resume() {
+        if (notificationSaveInProgress) return
         val currentState = _timerState.value
         if (currentState.status != TimerStatus.PAUSED) return
         
@@ -155,6 +162,7 @@ object TimerStateManager {
 
     @Synchronized
     fun stopAndPending() {
+        if (notificationSaveInProgress) return
         val currentState = _timerState.value
         if (currentState.status == TimerStatus.IDLE) return
         val elapsed = getElapsedSeconds()
@@ -174,6 +182,40 @@ object TimerStateManager {
     }
 
     @Synchronized
+    internal fun beginNotificationSave(sessionStart: Long): TimerState? {
+        val state = _timerState.value
+        if (notificationSaveInProgress || state.status == TimerStatus.IDLE ||
+            state.clientId == null || state.sessionStartTime != sessionStart || sessionStart <= 0
+        ) return null
+
+        pause()
+        notificationSaveInProgress = true
+        return _timerState.value
+    }
+
+    @Synchronized
+    internal fun endNotificationSave(saved: Boolean) {
+        notificationSaveInProgress = false
+        if (saved) {
+            setShowConfirmDialog(false)
+            stop()
+        }
+    }
+
+    @Synchronized
+    internal fun showSavedNotificationEntry(entryId: Long) {
+        prefs.edit().putLong(KEY_SAVED_NOTIFICATION_ENTRY, entryId).apply()
+        _savedNotificationEntry.value = entryId
+    }
+
+    @Synchronized
+    internal fun acknowledgeSavedNotificationEntry(entryId: Long) {
+        if (_savedNotificationEntry.value != entryId) return
+        prefs.edit().remove(KEY_SAVED_NOTIFICATION_ENTRY).apply()
+        _savedNotificationEntry.value = null
+    }
+
+    @Synchronized
     fun clearPending() {
         val currentState = _timerState.value
         val newState = currentState.copy(
@@ -185,6 +227,7 @@ object TimerStateManager {
 
     @Synchronized
     fun stop() {
+        if (notificationSaveInProgress) return
         val newState = TimerState(
             status = TimerStatus.IDLE,
             clientId = null,

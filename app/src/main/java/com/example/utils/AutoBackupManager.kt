@@ -6,6 +6,8 @@ import android.util.Log
 import com.example.TimeSheetApp
 import com.example.data.local.AppDatabase
 import com.example.ui.screens.settings.BackupPayload
+import com.example.ui.screens.settings.BACKUP_SCHEMA_VERSION
+import com.example.ui.screens.settings.withCurrentCurrencies
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -44,7 +46,7 @@ object AutoBackupManager {
                 val rateHistory = container.rateHistoryRepository.getAllHistory().first()
 
                 val payload = BackupPayload(
-                    schemaVersion = 1,
+                    schemaVersion = BACKUP_SCHEMA_VERSION,
                     clients = clients,
                     rateHistory = rateHistory,
                     timeEntries = timeEntries,
@@ -79,15 +81,14 @@ object AutoBackupManager {
                         Log.d(TAG, "Empty database and auto-backup file found. Restoring from: ${file.absolutePath}")
                         val jsonString = file.readText()
                         val payload = Json.decodeFromString(BackupPayload.serializer(), jsonString)
-                        if (payload.schemaVersion >= 1) {
-                            db.restoreBackup(
-                                clientsList = payload.clients,
-                                rateHistoryList = payload.rateHistory,
-                                timeEntriesList = payload.timeEntries,
-                                settings = payload.appSettings
-                            )
-                            Log.d(TAG, "Automatic restore from local backup succeeded!")
-                        }
+                            .withCurrentCurrencies()
+                        db.restoreBackup(
+                            clientsList = payload.clients,
+                            rateHistoryList = payload.rateHistory,
+                            timeEntriesList = payload.timeEntries,
+                            settings = payload.appSettings
+                        )
+                        Log.d(TAG, "Automatic restore from local backup succeeded!")
                     }
                 }
             } catch (e: Exception) {

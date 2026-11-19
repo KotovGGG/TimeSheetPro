@@ -1,5 +1,8 @@
 package com.example.ui.screens.timer
 
+import com.example.appLocale
+import com.example.R
+import com.example.appText
 import com.example.ui.theme.keepFocusedFieldVisible
 import com.example.ui.theme.AppButton as Button
 import com.example.ui.theme.AppAction
@@ -7,7 +10,6 @@ import com.example.ui.theme.AppSpacing
 import com.example.ui.theme.AppSize
 import com.example.ui.theme.LocalStatusPalette
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import android.app.DatePickerDialog
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -67,10 +69,12 @@ import com.example.TimeSheetApp
 import com.example.data.local.entity.AmountRoundingMode
 import com.example.data.local.entity.AppSettings
 import com.example.data.local.entity.Client
+import com.example.data.local.entity.billingRate
 import com.example.data.local.entity.TimeEntry
 import com.example.data.local.entity.TimeEntryStatus
 import com.example.ui.AppViewModelProvider
 import com.example.ui.theme.LedgerStyles
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
@@ -150,7 +154,7 @@ fun TimerScreen(
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(modifier = Modifier.width(AppSpacing.sm))
-                            Text("Старт", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            Text(appText(R.string.copy_start), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                         }
 
                         // Manual entry action
@@ -164,7 +168,7 @@ fun TimerScreen(
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(modifier = Modifier.width(AppSpacing.sm))
-                            Text("Добавить запись", fontWeight = FontWeight.Medium)
+                            Text(appText(R.string.copy_add_record), fontWeight = FontWeight.Medium)
                         }
                     }
 
@@ -183,7 +187,7 @@ fun TimerScreen(
                             ) {
                                 Icon(Icons.Default.Pause, contentDescription = null)
                                 Spacer(modifier = Modifier.width(AppSpacing.sm))
-                                Text("Пауза", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text(appText(R.string.copy_pause), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                             }
                             Button(
                                 onClick = {
@@ -197,7 +201,7 @@ fun TimerScreen(
                             ) {
                                 Icon(Icons.Default.Stop, contentDescription = null)
                                 Spacer(modifier = Modifier.width(AppSpacing.sm))
-                                Text("Завершить", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text(appText(R.string.copy_finish), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                             }
                         }
                     }
@@ -216,7 +220,7 @@ fun TimerScreen(
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null)
                                 Spacer(modifier = Modifier.width(AppSpacing.sm))
-                                Text("Продолжить", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text(appText(R.string.copy_resume), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                             }
                             Button(
                                 onClick = {
@@ -230,7 +234,7 @@ fun TimerScreen(
                             ) {
                                 Icon(Icons.Default.Stop, contentDescription = null)
                                 Spacer(modifier = Modifier.width(AppSpacing.sm))
-                                Text("Завершить", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text(appText(R.string.copy_finish), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                             }
                         }
                     }
@@ -247,8 +251,8 @@ fun TimerScreen(
                         LiveTimerDial(viewModel, timerState.status, 160.dp)
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
-                        com.example.ui.theme.AppCompactLedgerSummary("Сегодня", formatHours(dailySummary.seconds),
-                            formatCurrency(dailySummary.amount, settings.currency))
+                        com.example.ui.theme.AppCompactLedgerSummary(appText(R.string.copy_today), formatHours(dailySummary.seconds),
+                            formatCurrencyTotals(dailySummary.totals, settings.currency))
                         timerControls()
                     }
                 }
@@ -261,8 +265,8 @@ fun TimerScreen(
                     .heightIn(min = parentHeight - AppSpacing.xxl),
                 verticalArrangement = Arrangement.spacedBy(AppSpacing.xl)
             ) {
-                com.example.ui.theme.AppLedgerSummary("Сегодня", formatHours(dailySummary.seconds),
-                    formatCurrency(dailySummary.amount, settings.currency), Modifier.testTag("summary_card"))
+                com.example.ui.theme.AppLedgerSummary(appText(R.string.copy_today), formatHours(dailySummary.seconds),
+                    formatCurrencyTotals(dailySummary.totals, settings.currency), Modifier.testTag("summary_card"))
 
                 // --- Central Circular Ring Dial and Live Status ---
             Column(
@@ -307,12 +311,12 @@ fun TimerScreen(
                     app = app,
                     onSuccess = {
                         coroutineScope.launch {
-                            snackbarHostState.showSnackbar("Запись успешно добавлена")
+                            snackbarHostState.showSnackbar(appText(R.string.copy_record_added))
                         }
                     },
                     onError = { errorMsg ->
                         coroutineScope.launch {
-                            snackbarHostState.showSnackbar("Ошибка: $errorMsg")
+                            snackbarHostState.showSnackbar(appText(R.string.copy_error_1, errorMsg))
                         }
                     }
                 )
@@ -325,8 +329,8 @@ fun TimerScreen(
         AlertDialog(
             onDismissRequest = { TimerStateManager.setShowConfirmDialog(false) },
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-            title = { Text("Завершить запись?", fontWeight = FontWeight.Bold) },
-            text = { Text("Вы действительно хотите завершить текущую сессию записи времени?") },
+            title = { Text(appText(R.string.copy_finish_the_session), fontWeight = FontWeight.Bold) },
+            text = { Text(appText(R.string.copy_finish_the_current_time_tracking_session)) },
             confirmButton = {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -337,7 +341,7 @@ fun TimerScreen(
                         onClick = { TimerStateManager.setShowConfirmDialog(false) },
                         variant = AppAction.Quiet
                     ) {
-                        Text("Продолжить")
+                        Text(appText(R.string.copy_resume))
                     }
                     Button(
                         onClick = {
@@ -347,7 +351,7 @@ fun TimerScreen(
                         modifier = Modifier.testTag("confirm_finish_timer"),
                         variant = AppAction.Primary
                     ) {
-                        Text("Завершить")
+                        Text(appText(R.string.copy_finish))
                     }
                 }
             },
@@ -381,7 +385,7 @@ fun TimerScreen(
                     settings = settings,
                     onSuccess = {
                         coroutineScope.launch {
-                            snackbarHostState.showSnackbar("Сессия успешно сохранена")
+                            snackbarHostState.showSnackbar(appText(R.string.copy_session_saved))
                         }
                     }
                 )
@@ -439,7 +443,7 @@ fun TimerDial(
         ) {
             Text(
                 text = formatDuration(elapsedSeconds),
-                style = if (compactNumbers) LedgerStyles.MonospaceNumberCompact else LedgerStyles.MonospaceNumberLarge,
+                style = if (compactNumbers) LedgerStyles.NumberCompact else LedgerStyles.NumberLarge,
                 maxLines = 1,
                 softWrap = false,
                 color = MaterialTheme.colorScheme.onSurface
@@ -449,9 +453,10 @@ fun TimerDial(
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = formatDuration(pauseSeconds),
-                    style = LedgerStyles.MonospaceNumberSmall.copy(
+                    style = LedgerStyles.NumberSmall.copy(
                         fontWeight = FontWeight.Normal,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        fontFamily = com.example.ui.theme.LedgerFont,
+                        fontFeatureSettings = "tnum"
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -493,10 +498,10 @@ fun AddManualRecordDialog(
     var manualStartHours by rememberSaveable { mutableStateOf(calNow.get(Calendar.HOUR_OF_DAY)) }
     var manualStartMinutes by rememberSaveable { mutableStateOf(calNow.get(Calendar.MINUTE)) }
     var showManualStartTimePicker by rememberSaveable { mutableStateOf(false) }
-    val formattedStartTime = String.format(Locale.US, "%02d:%02d", manualStartHours, manualStartMinutes)
+    val formattedStartTime = formatClockTime(manualStartHours, manualStartMinutes)
 
     val context = LocalContext.current
-    val displayFormatter = remember { SimpleDateFormat("d MMMM, yyyy", Locale.forLanguageTag("ru")) }
+    val displayFormatter = remember { SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(appLocale(), "yMMMMd"), appLocale()) }
 
     var showDatePickerState by remember { mutableStateOf(false) }
     var datePickerInitialTime by remember { mutableStateOf(0L) }
@@ -522,7 +527,7 @@ fun AddManualRecordDialog(
         val startTimePickerState = rememberTimePickerState(
             initialHour = manualStartHours,
             initialMinute = manualStartMinutes,
-            is24Hour = true
+            is24Hour = android.text.format.DateFormat.is24HourFormat(androidx.compose.ui.platform.LocalContext.current)
         )
         
         TimePickerDialog(
@@ -536,7 +541,7 @@ fun AddManualRecordDialog(
                     },
                     variant = AppAction.Quiet
                 ) {
-                    Text("Готово")
+                    Text(appText(R.string.copy_done))
                 }
             },
             dismissButton = {
@@ -544,7 +549,7 @@ fun AddManualRecordDialog(
                     onClick = { showManualStartTimePicker = false },
                     variant = AppAction.Quiet
                 ) {
-                    Text("Отмена")
+                    Text(appText(R.string.copy_cancel))
                 }
             }
         ) {
@@ -557,40 +562,10 @@ fun AddManualRecordDialog(
     }
 
     if (showTimePicker) {
-        val timePickerState = rememberTimePickerState(
-            initialHour = hours,
-            initialMinute = minutes,
-            is24Hour = true
-        )
-        
-        TimePickerDialog(
-            onDismissRequest = { showTimePicker = false },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        hours = timePickerState.hour
-                        minutes = timePickerState.minute
-                        showTimePicker = false
-                    },
-                    variant = AppAction.Quiet
-                ) {
-                    Text("Готово")
-                }
-            },
-            dismissButton = {
-                Button(
-                    onClick = { showTimePicker = false },
-                    variant = AppAction.Quiet
-                ) {
-                    Text("Отмена")
-                }
-            }
-        ) {
-            MaterialTheme(
-                typography = MaterialTheme.typography
-            ) {
-                com.example.ui.theme.AppTimePicker(state = timePickerState)
-            }
+        AppDurationPickerDialog(hours, minutes, { showTimePicker = false }) { pickedHours, pickedMinutes ->
+            hours = pickedHours
+            minutes = pickedMinutes
+            showTimePicker = false
         }
     }
 
@@ -610,7 +585,7 @@ fun AddManualRecordDialog(
                     .padding(bottom = AppSpacing.xxl)
             ) {
                 Text(
-                    text = "Добавить запись",
+                    text = appText(R.string.copy_add_record),
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.fillMaxWidth()
@@ -619,7 +594,7 @@ fun AddManualRecordDialog(
                 // Combined Date and Start Time Button
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                     Text(
-                        text = "Начало работы",
+                        text = appText(R.string.copy_start_of_work),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -637,12 +612,12 @@ fun AddManualRecordDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.DateRange,
-                            contentDescription = "Изменить дату и время",
+                            contentDescription = appText(R.string.copy_change_date_and_time),
                             modifier = Modifier.size(AppSpacing.page)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "${displayFormatter.format(Date(manualDateMs))} в $formattedStartTime",
+                            text = appText(R.string.copy_text_1_at_2, displayFormatter.format(Date(manualDateMs)), formattedStartTime),
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.Bold
                         )
@@ -652,7 +627,7 @@ fun AddManualRecordDialog(
                 // Work Duration Button (TimePicker Trigger)
                 val formattedTime = String.format(Locale.US, "%02d:%02d", hours, minutes)
                 Column {
-                    Text("Длительность", style = MaterialTheme.typography.labelSmall)
+                    Text(appText(R.string.copy_duration), style = MaterialTheme.typography.labelSmall)
                     Spacer(modifier = Modifier.height(AppSpacing.xs))
                     Button(
                         onClick = { showTimePicker = true },
@@ -663,12 +638,12 @@ fun AddManualRecordDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Schedule,
-                            contentDescription = "Изменить время работы",
+                            contentDescription = appText(R.string.copy_change_work_time),
                             modifier = Modifier.size(AppSpacing.page)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Время работы: $formattedTime",
+                            text = appText(R.string.copy_time_worked_1, formattedTime),
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.Bold
                         )
@@ -679,8 +654,8 @@ fun AddManualRecordDialog(
                 OutlinedTextField(
                     value = comment,
                     onValueChange = { comment = it },
-                    label = { Text("Комментарий") },
-                    placeholder = { Text("Например: Разработка API") },
+                    label = { Text(appText(R.string.copy_comment)) },
+                    placeholder = { Text(appText(R.string.copy_for_example_api_development)) },
                     modifier = Modifier.keepFocusedFieldVisible().fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
                     maxLines = 3
@@ -689,13 +664,13 @@ fun AddManualRecordDialog(
                 // Client selector inside dialog (moved after comment)
                 val currentClient = activeClients.find { it.id == selectedId }
                 Column {
-                    Text("Заказчик", style = MaterialTheme.typography.labelSmall)
+                    Text(appText(R.string.copy_client_2), style = MaterialTheme.typography.labelSmall)
                     Spacer(modifier = Modifier.height(AppSpacing.xs))
                     Box(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         com.example.ui.theme.AppClientField(
-                                    value = currentClient?.name ?: "Выберите заказчика",
+                                    value = currentClient?.name ?: appText(R.string.copy_choose_a_client),
                                     color = currentClient?.colorHex?.let { safeParseColor(it) } ?: MaterialTheme.colorScheme.primary,
                                     onClick = { dropdownExpanded = true }, modifier = Modifier.testTag("client_selector_field"))
                     }
@@ -712,7 +687,7 @@ fun AddManualRecordDialog(
                             .heightIn(min = AppSize.touchTarget),
                         variant = AppAction.Quiet
                     ) {
-                        Text("Отмена")
+                        Text(appText(R.string.copy_cancel))
                     }
 
                     Button(
@@ -735,7 +710,7 @@ fun AddManualRecordDialog(
                             .weight(1f)
                             .heightIn(min = AppSize.touchTarget)
                     ) {
-                        Text("Сохранить", fontWeight = FontWeight.Bold)
+                        Text(appText(R.string.copy_save), fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -759,16 +734,45 @@ fun formatDuration(totalSeconds: Long): String {
     val hours = totalSeconds / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
+    return String.format(appLocale(), "%02d:%02d:%02d", hours, minutes, seconds)
 }
 
 // Format seconds into decimal hours (e.g., 2.50 hrs)
 fun formatHours(totalSeconds: Long): String {
     val hours = totalSeconds.toDouble() / 3600.0
-    return String.format(Locale.getDefault(), "%.2f ч", hours)
+    return String.format(appLocale(), appText(R.string.copy_text_2f_hr), hours)
 }
 
 // Format currency using locale
+@Composable
+fun clockFormatter(): java.text.DateFormat {
+    val locale = appLocale()
+    val use24HourClock = android.text.format.DateFormat.is24HourFormat(LocalContext.current)
+    return remember(locale, use24HourClock) {
+        val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, if (use24HourClock) "Hm" else "hm")
+        SimpleDateFormat(pattern, locale)
+    }
+}
+
+@Composable
+fun formatClockTime(hour: Int, minute: Int): String {
+    val formatter = clockFormatter()
+    val time = Calendar.getInstance().apply {
+        clear()
+        set(2000, Calendar.JANUARY, 15, hour, minute, 0)
+    }.time
+    return formatter.format(time)
+}
+
+fun formatCurrencyTotals(totals: Map<String, Double>, emptyCurrency: String? = null): String =
+    when {
+        totals.isEmpty() -> emptyCurrency?.let { formatCurrency(0.0, it) }.orEmpty()
+        totals.size == 1 -> totals.entries.first().let { formatCurrency(it.value, it.key) }
+        else -> totals.entries.joinToString("\n") { (code, amount) ->
+            String.format(appLocale(), "%,.2f %s", amount, code)
+        }
+    }
+
 fun formatCurrency(amount: Double, currencyCode: String): String {
     val symbol = when (currencyCode) {
         "USD" -> "$"
@@ -781,7 +785,7 @@ fun formatCurrency(amount: Double, currencyCode: String): String {
         "CHF" -> "₣"
         else -> currencyCode
     }
-    return String.format(Locale.getDefault(), "%,.2f %s", amount, symbol)
+    return String.format(appLocale(), "%,.2f %s", amount, symbol)
 }
 
 // Safe hex color parser
@@ -830,7 +834,8 @@ fun insertManualEntry(
             }
             
             // 2. Applied Rate
-            val appliedRate = client?.defaultHourlyRate?.takeIf { it > 0.0 } ?: settings.globalHourlyRate
+            val billing = settings.billingRate(client)
+            val appliedRate = billing.amount
             
             // 3. Amount & Rounding
             val rawAmount = (finalDurationSeconds.toDouble() / 3600.0) * appliedRate
@@ -844,6 +849,7 @@ fun insertManualEntry(
                 rawDurationSeconds = durationSeconds,
                 comment = comment.ifBlank { null },
                 appliedRate = appliedRate,
+                currencyCode = billing.currencyCode,
                 amount = finalAmount,
                 status = TimeEntryStatus.NOT_PAID
             )
@@ -856,7 +862,7 @@ fun insertManualEntry(
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                onError(e.message ?: "Непредвиденная ошибка")
+                onError(e.message ?: appText(R.string.copy_unexpected_error))
             }
         }
     }
@@ -866,6 +872,7 @@ fun insertManualEntry(
 @Composable
 fun TimePickerDialog(
     onDismissRequest: () -> Unit,
+    title: String = appText(R.string.copy_choose_time),
     confirmButton: @Composable () -> Unit,
     dismissButton: @Composable () -> Unit,
     content: @Composable () -> Unit
@@ -878,12 +885,18 @@ fun TimePickerDialog(
             Surface(
                 shape = MaterialTheme.shapes.extraLarge,
                 tonalElevation = 6.dp,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.widthIn(max = 560.dp).wrapContentHeight()
             ) {
-                if (maxHeight < 240.dp) {
+                val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+                    android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                if (landscape && maxHeight < 240.dp) {
                     Row(Modifier.padding(AppSpacing.sm), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
-                            horizontalAlignment = Alignment.CenterHorizontally) { content() }
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(title, style = MaterialTheme.typography.titleMedium)
+                            content()
+                        }
                         Column(Modifier.padding(start = AppSpacing.sm),
                             verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                             confirmButton()
@@ -896,7 +909,7 @@ fun TimePickerDialog(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Выбор времени",
+                            text = title,
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.fillMaxWidth().padding(bottom = AppSpacing.page),
                             textAlign = TextAlign.Start
@@ -913,6 +926,42 @@ fun TimePickerDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AppDurationPickerDialog(hours: Int, minutes: Int, onDismiss: () -> Unit, onConfirm: (Int, Int) -> Unit) {
+    var hourText by rememberSaveable { mutableStateOf(hours.toString()) }
+    var minuteText by rememberSaveable { mutableStateOf(minutes.toString()) }
+    val hourValue = hourText.toIntOrNull()?.takeIf { it in 0..9999 }
+    val minuteValue = minuteText.toIntOrNull()?.takeIf { it in 0..59 }
+    TimePickerDialog(
+        onDismissRequest = onDismiss,
+        title = appText(R.string.copy_duration),
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(checkNotNull(hourValue), checkNotNull(minuteValue)) },
+                enabled = hourValue != null && minuteValue != null,
+                variant = AppAction.Quiet
+            ) { Text(appText(R.string.copy_done)) }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss, variant = AppAction.Quiet) { Text(appText(R.string.copy_cancel)) }
+        }
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+            OutlinedTextField(hourText, { hourText = it.filter(Char::isDigit).take(4) },
+                label = { Text(appText(R.string.duration_hours)) }, singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f).widthIn(max = 140.dp))
+            OutlinedTextField(minuteText, { minuteText = it.filter(Char::isDigit).take(2) },
+                label = { Text(appText(R.string.duration_minutes)) }, singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                isError = minuteText.isNotEmpty() && minuteValue == null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f).widthIn(max = 140.dp))
         }
     }
 }
@@ -983,46 +1032,17 @@ fun SaveSessionDialog(
     val hVal = hoursStr.toLongOrNull() ?: 0L
     val mVal = minutesStr.toLongOrNull() ?: 0L
     val bVal = breakMinutesStr.toLongOrNull() ?: 0L
-    val rateVal = hourlyRateStr.toDoubleOrNull() ?: 0.0
+    val effectiveCurrency = activeClients.find { it.id == selectedClientId }?.currencyCode ?: currency
+    val rateVal = hourlyRateStr.replace(',', '.').toDoubleOrNull() ?: 0.0
 
     val calculatedDurationSeconds = maxOf(0L, (hVal * 3600) + (mVal * 60))
     val calculatedEarnings = (calculatedDurationSeconds.toDouble() / 3600.0) * rateVal
 
     if (showTimePicker) {
-        val timePickerState = rememberTimePickerState(
-            initialHour = hVal.toInt().coerceIn(0, 23),
-            initialMinute = mVal.toInt().coerceIn(0, 59),
-            is24Hour = true
-        )
-        
-        TimePickerDialog(
-            onDismissRequest = { showTimePicker = false },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        hoursStr = timePickerState.hour.toString()
-                        minutesStr = timePickerState.minute.toString()
-                        showTimePicker = false
-                    },
-                    variant = AppAction.Quiet
-                ) {
-                    Text("Готово")
-                }
-            },
-            dismissButton = {
-                Button(
-                    onClick = { showTimePicker = false },
-                    variant = AppAction.Quiet
-                ) {
-                    Text("Отмена")
-                }
-            }
-        ) {
-            MaterialTheme(
-                typography = MaterialTheme.typography
-            ) {
-                com.example.ui.theme.AppTimePicker(state = timePickerState)
-            }
+        AppDurationPickerDialog(hoursStr.toIntOrNull() ?: 0, minutesStr.toIntOrNull() ?: 0, { showTimePicker = false }) { pickedHours, pickedMinutes ->
+            hoursStr = pickedHours.toString()
+            minutesStr = pickedMinutes.toString()
+            showTimePicker = false
         }
     }
 
@@ -1033,7 +1053,7 @@ fun SaveSessionDialog(
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = AppSpacing.xl).padding(bottom = AppSpacing.xl)) {
-            Text("Сохранить запись", style = MaterialTheme.typography.titleLarge,
+            Text(appText(R.string.copy_save_record), style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(bottom = AppSpacing.lg))
             Box(modifier = Modifier.fillMaxWidth()) {
                 Column(
@@ -1055,14 +1075,14 @@ fun SaveSessionDialog(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Заработано за сессию",
+                            text = appText(R.string.copy_session_earnings),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(AppSpacing.xs))
                         Text(
-                            text = formatCurrency(calculatedEarnings, currency),
+                            text = formatCurrency(calculatedEarnings, effectiveCurrency),
                             style = MaterialTheme.typography.headlineMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -1072,15 +1092,15 @@ fun SaveSessionDialog(
                 }
 
                 if (activeClients.isNotEmpty() && (rateVal <= 0.0 || calculatedEarnings <= 0.0)) {
-                    com.example.ui.theme.AppInfoMessage("Сумма записи будет 0. Проверьте ставку и время работы.")
+                    com.example.ui.theme.AppInfoMessage(appText(R.string.copy_this_record_will_have_a_zero_amount))
                 }
 
                 // 2. Rate Input
                 OutlinedTextField(
                     value = hourlyRateStr,
                     onValueChange = { hourlyRateStr = it },
-                    label = { Text("Часовой тариф ($currency/ч)") },
-                    placeholder = { Text("Пример: 100") },
+                    label = { Text(appText(R.string.copy_hourly_rate_1_hr, effectiveCurrency)) },
+                    placeholder = { Text(appText(R.string.copy_for_example_100)) },
                     modifier = Modifier.keepFocusedFieldVisible().fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
                     singleLine = true
@@ -1091,7 +1111,7 @@ fun SaveSessionDialog(
                 OutlinedTextField(
                     value = breakMinutesStr,
                     onValueChange = { breakMinutesStr = it },
-                    label = { Text("Время перерывов (минуты)") },
+                    label = { Text(appText(R.string.copy_break_time_minutes)) },
                     modifier = Modifier.keepFocusedFieldVisible().fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
                     singleLine = true,
@@ -1110,12 +1130,12 @@ fun SaveSessionDialog(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Schedule,
-                        contentDescription = "Изменить время работы",
+                        contentDescription = appText(R.string.copy_change_work_time),
                         modifier = Modifier.size(AppSpacing.page)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Время работы: $formattedTime",
+                        text = appText(R.string.copy_time_worked_1, formattedTime),
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -1126,8 +1146,8 @@ fun SaveSessionDialog(
                 OutlinedTextField(
                     value = comment,
                     onValueChange = { comment = it },
-                    label = { Text("Комментарий") },
-                    placeholder = { Text("Например: Разработка макета") },
+                    label = { Text(appText(R.string.copy_comment)) },
+                    placeholder = { Text(appText(R.string.copy_for_example_layout_design)) },
                     modifier = Modifier.keepFocusedFieldVisible().fillMaxWidth(),
                     shape = MaterialTheme.shapes.medium,
                     singleLine = true,
@@ -1147,7 +1167,7 @@ fun SaveSessionDialog(
                     val currentClient = activeClients.find { it.id == selectedClientId }
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "Заказчик",
+                            text = appText(R.string.copy_client_2),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(bottom = AppSpacing.xs)
@@ -1157,14 +1177,14 @@ fun SaveSessionDialog(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             com.example.ui.theme.AppClientField(
-                                    value = currentClient?.name ?: "Выберите заказчика",
+                                    value = currentClient?.name ?: appText(R.string.copy_choose_a_client),
                                     color = currentClient?.colorHex?.let { safeParseColor(it) } ?: MaterialTheme.colorScheme.primary,
                                     onClick = { dropdownExpanded = true }, modifier = Modifier.testTag("client_selector_field"))
                         }
                     }
                 } else {
                     Text(
-                        text = "Добавьте заказчика во вкладке «Заказчики», чтобы сохранить запись.",
+                        text = appText(R.string.copy_add_a_client_in_the_clients_tab_2),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -1181,7 +1201,7 @@ fun SaveSessionDialog(
                             .heightIn(min = AppSize.touchTarget),
                         variant = AppAction.DestructiveQuiet
                     ) {
-                        Text("Не сохранять")
+                        Text(appText(R.string.copy_discard))
                     }
 
                     Button(
@@ -1190,7 +1210,7 @@ fun SaveSessionDialog(
                             val m = minutesStr.toLongOrNull() ?: 0L
                             val finalDurationSeconds = maxOf(0L, (h * 3600) + (m * 60))
                             val selectedClient = activeClients.find { it.id == selectedClientId }
-                            val rate = hourlyRateStr.toDoubleOrNull()?.takeIf { it > 0.0 }
+                            val rate = hourlyRateStr.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0.0 }
                                 ?: (selectedClient?.defaultHourlyRate?.takeIf { it > 0.0 } ?: globalHourlyRate)
                             
                             onSave(selectedClientId, comment, rate, finalDurationSeconds)
@@ -1200,7 +1220,7 @@ fun SaveSessionDialog(
                             .weight(1f)
                             .heightIn(min = AppSize.touchTarget)
                     ) {
-                        Text("Сохранить", fontWeight = FontWeight.Bold)
+                        Text(appText(R.string.copy_save), fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1221,10 +1241,10 @@ fun SaveSessionDialog(
     }
     if (showDiscardConfirmation) AlertDialog(
         onDismissRequest = { showDiscardConfirmation = false },
-        title = { Text("Не сохранять запись?") },
-        text = { Text("Время этой сессии не будет добавлено в записи.") },
-        confirmButton = { Button(onClick = onDismiss, variant = AppAction.Destructive) { Text("Не сохранять") } },
-        dismissButton = { Button(onClick = { showDiscardConfirmation = false }, variant = AppAction.Quiet) { Text("Назад") } },
+        title = { Text(appText(R.string.copy_discard_this_record)) },
+        text = { Text(appText(R.string.copy_discarding_drops_the_time_tracked_in_this)) },
+        confirmButton = { Button(onClick = onDismiss, variant = AppAction.Destructive) { Text(appText(R.string.copy_discard)) } },
+        dismissButton = { Button(onClick = { showDiscardConfirmation = false }, variant = AppAction.Quiet) { Text(appText(R.string.copy_back)) } },
     )
 }
 
@@ -1242,36 +1262,11 @@ fun saveTrackedSessionEntry(
         val now = System.currentTimeMillis()
         val startTime = now - (durationSeconds * 1000)
         
-        // Time rounding (if configured)
-        val roundingMinutes = settings.timeRoundingMinutes
-        val finalDuration = if (roundingMinutes > 0) {
-            val roundingSeconds = roundingMinutes * 60L
-            if (durationSeconds % roundingSeconds == 0L) {
-                durationSeconds
-            } else {
-                ((durationSeconds / roundingSeconds) + 1L) * roundingSeconds
-            }
-        } else {
-            durationSeconds
-        }
-        
-        // Calculate amount and round
-        val effectiveRate = if (rate > 0.0) rate else settings.globalHourlyRate
-        val rawAmount = (finalDuration.toDouble() / 3600.0) * effectiveRate
-        val finalAmount = settings.roundAmount(rawAmount)
-        
-        val entry = TimeEntry(
-            clientId = clientId,
-            startTime = startTime,
-            endTime = now,
-            durationSeconds = finalDuration,
-            rawDurationSeconds = durationSeconds,
-            comment = comment.ifBlank { null },
-            appliedRate = effectiveRate,
-            amount = finalAmount,
-            status = TimeEntryStatus.NOT_PAID
+        val client = app.container.clientRepository.getClientById(clientId).first()
+        val entry = trackedSessionEntry(
+            clientId, client, comment, rate, durationSeconds, settings, startTime, now
         )
-        
+
         app.container.timeEntryRepository.insertTimeEntry(entry)
         com.example.utils.AutoBackupManager.triggerBackup(app)
         
@@ -1288,69 +1283,43 @@ fun ComposeDatePickerDialog(
     onDismissRequest: () -> Unit,
     onDateSelected: (Long) -> Unit
 ) {
-    val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = initialTimeMs
-    )
-    val colors = MaterialTheme.colorScheme
-    
-    DatePickerDialog(
+    val utcZone = java.util.TimeZone.getTimeZone("UTC")
+    val localDate = java.util.Calendar.getInstance().apply { timeInMillis = initialTimeMs }
+    val pickerDate = java.util.Calendar.getInstance(utcZone).apply {
+        clear()
+        set(localDate.get(java.util.Calendar.YEAR), localDate.get(java.util.Calendar.MONTH),
+            localDate.get(java.util.Calendar.DAY_OF_MONTH))
+    }
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = pickerDate.timeInMillis)
+    TimePickerDialog(
         onDismissRequest = onDismissRequest,
+        title = appText(R.string.choose_date),
         confirmButton = {
             Button(
                 onClick = {
                     datePickerState.selectedDateMillis?.let { dateUtc ->
-                        val utcCal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
-                            timeInMillis = dateUtc
+                        pickerDate.timeInMillis = dateUtc
+                        val selected = java.util.Calendar.getInstance().apply {
+                            clear()
+                            set(pickerDate.get(java.util.Calendar.YEAR), pickerDate.get(java.util.Calendar.MONTH),
+                                pickerDate.get(java.util.Calendar.DAY_OF_MONTH))
                         }
-                        val localCal = java.util.Calendar.getInstance().apply {
-                            set(java.util.Calendar.YEAR, utcCal.get(java.util.Calendar.YEAR))
-                            set(java.util.Calendar.MONTH, utcCal.get(java.util.Calendar.MONTH))
-                            set(java.util.Calendar.DAY_OF_MONTH, utcCal.get(java.util.Calendar.DAY_OF_MONTH))
-                            set(java.util.Calendar.HOUR_OF_DAY, 0)
-                            set(java.util.Calendar.MINUTE, 0)
-                            set(java.util.Calendar.SECOND, 0)
-                            set(java.util.Calendar.MILLISECOND, 0)
-                        }
-                        onDateSelected(localCal.timeInMillis)
+                        onDateSelected(selected.timeInMillis)
                     }
                     onDismissRequest()
                 },
+                enabled = datePickerState.selectedDateMillis != null,
                 variant = AppAction.Quiet
-            ) {
-                Text("Готово")
-            }
+            ) { Text(appText(R.string.copy_done)) }
         },
         dismissButton = {
-            Button(
-                onClick = onDismissRequest,
-                variant = AppAction.Quiet
-            ) {
-                Text("Отмена")
-            }
-        },
-        colors = DatePickerDefaults.colors(
-            containerColor = colors.surface
-        )
+            Button(onClick = onDismissRequest, variant = AppAction.Quiet) { Text(appText(R.string.copy_cancel)) }
+        }
     ) {
         DatePicker(
             state = datePickerState,
-            colors = DatePickerDefaults.colors(
-                containerColor = colors.surface,
-                titleContentColor = colors.onSurface,
-                headlineContentColor = colors.onSurface,
-                weekdayContentColor = colors.onSurface.copy(alpha = 0.6f),
-                subheadContentColor = colors.onSurface.copy(alpha = 0.6f),
-                navigationContentColor = colors.onSurface,
-                yearContentColor = colors.onSurface.copy(alpha = 0.8f),
-                selectedYearContentColor = colors.onPrimary,
-                selectedYearContainerColor = colors.primary,
-                dayContentColor = colors.onSurface,
-                selectedDayContentColor = colors.onPrimary,
-                selectedDayContainerColor = colors.primary,
-                todayContentColor = colors.secondary,
-                todayDateBorderColor = colors.secondary,
-                dividerColor = colors.outline
-            )
+            title = null,
+            colors = DatePickerDefaults.colors(containerColor = Color.Transparent)
         )
     }
 }

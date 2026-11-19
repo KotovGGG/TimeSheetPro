@@ -15,4 +15,5 @@
     <color name="widget_secondary">#5E5D72</color>
     <color name="widget_error">#BA1A1A</color>
     <color name="widget_button_text">#FFFFFF</color>
+    <color name="widget_secondary_button_text">#FFFFFF</color>
 </resources>

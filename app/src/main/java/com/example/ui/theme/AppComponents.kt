@@ -1,5 +1,7 @@
 package com.example.ui.theme
 
+import com.example.R
+import com.example.appText
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -99,9 +101,9 @@ data class ClientChoice(val id: Long, val name: String, val color: Color)
 fun AppClientPickerSheet(options: List<ClientChoice>, selectedId: Long,
     onSelect: (Long) -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     AppFormSheet(onDismiss, modifier) {
-        AppSheetHeader("Заказчик", onDismiss)
+        AppSheetHeader(appText(R.string.copy_client_2), onDismiss)
         if (options.isEmpty()) {
-            Text("Пока нет заказчиков. Добавьте заказчика во вкладке «Заказчики».",
+            Text(appText(R.string.copy_add_your_first_client_in_the_clients),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Column(Modifier.selectableGroup()) {
@@ -148,7 +150,7 @@ fun AppTimePicker(state: TimePickerState) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (compact || keyboard) TimeInput(state) else TimePicker(state)
         if (!compact) AppButton(onClick = { keyboard = !keyboard }, variant = AppAction.Quiet) {
-            Text(if (keyboard) "Выбрать на циферблате" else "Ввести время")
+            Text(if (keyboard) appText(R.string.copy_use_clock_dial) else appText(R.string.copy_type_time))
         }
     }
 }
@@ -157,7 +159,7 @@ fun AppTimePicker(state: TimePickerState) {
 fun AppSheetHeader(title: String, onDismiss: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-        AppIconAction("Закрыть", androidx.compose.material.icons.Icons.Default.Close, onDismiss)
+        AppIconAction(appText(R.string.copy_close), androidx.compose.material.icons.Icons.Default.Close, onDismiss)
     }
 }
 
@@ -235,10 +237,18 @@ fun AppSectionTitle(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun AppSettingsRow(title: String, value: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun AppSettingsRow(
+    title: String,
+    value: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    trailingContent: @Composable () -> Unit = {
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+    }
+) {
     ListItem(
         onClick = onClick, supportingContent = { Text(value) },
-        trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
+        trailingContent = trailingContent,
         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         modifier = modifier,
         content = { Text(title) },
@@ -285,8 +295,8 @@ fun AppColorPickerSheet(
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
             .padding(horizontal = AppSpacing.xl).padding(bottom = AppSpacing.xl)) {
-            Text("Цвет заказчика", style = MaterialTheme.typography.titleLarge)
-            Text("Метка помогает различать заказчиков в записях.",
+            Text(appText(R.string.copy_client_color), style = MaterialTheme.typography.titleLarge)
+            Text(appText(R.string.copy_the_color_helps_identify_clients_in_records),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = AppSpacing.lg))
             FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
@@ -315,8 +325,8 @@ fun AppCompactLedgerSummary(title: String, hours: String, amount: String) {
         Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(AppSpacing.lg),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
-            Text(hours, style = LedgerStyles.MonospaceNumberSmall, color = MaterialTheme.colorScheme.onSurface)
-            Text(amount, style = LedgerStyles.MonospaceNumberSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(hours, style = LedgerStyles.NumberSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(amount, style = LedgerStyles.NumberSmall, color = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -331,17 +341,17 @@ fun AppLedgerSummary(title: String, time: String, amount: String, modifier: Modi
                 val density = androidx.compose.ui.platform.LocalDensity.current
                 val measurer = androidx.compose.ui.text.rememberTextMeasurer()
                 val amountWidth = measurer.measure(androidx.compose.ui.text.AnnotatedString(amount),
-                    style = LedgerStyles.MonospaceNumberMedium, softWrap = false).size.width
+                    style = LedgerStyles.NumberMedium, softWrap = false).size.width
                 val columnWidth = with(density) { ((maxWidth - AppSpacing.lg) / 2).toPx() }
                 if (maxWidth < AppSize.summaryColumnsMin || density.fontScale > 1.3f || amountWidth > columnWidth) {
                     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
-                        LedgerMetric("Время", time)
-                        LedgerMetric("Сумма", amount)
+                        LedgerMetric(appText(R.string.copy_time), time)
+                        LedgerMetric(appText(R.string.copy_amount), amount)
                     }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.lg)) {
-                        LedgerMetric("Время", time, Modifier.weight(1f))
-                        LedgerMetric("Сумма", amount, Modifier.weight(1f))
+                        LedgerMetric(appText(R.string.copy_time), time, Modifier.weight(1f))
+                        LedgerMetric(appText(R.string.copy_amount), amount, Modifier.weight(1f))
                     }
                 }
             }
@@ -353,6 +363,6 @@ fun AppLedgerSummary(title: String, time: String, amount: String, modifier: Modi
 private fun LedgerMetric(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = if (value.length > 14) LedgerStyles.MonospaceAmountLong else LedgerStyles.MonospaceNumberMedium)
+        Text(value, style = if (value.length > 14) LedgerStyles.AmountLong else LedgerStyles.NumberMedium)
     }
 }

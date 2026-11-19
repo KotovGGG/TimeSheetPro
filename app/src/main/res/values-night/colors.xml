@@ -7,4 +7,5 @@
     <color name="widget_secondary">#C7C3DB</color>
     <color name="widget_error">#FFB4AB</color>
     <color name="widget_button_text">#21194F</color>
+    <color name="widget_secondary_button_text">#343144</color>
 </resources>

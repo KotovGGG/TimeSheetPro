@@ -116,7 +116,7 @@ class BackupAuditTest {
                 selectRestore(validName); text("Заменить данные")
                 waitText("Данные восстановлены"); capture("restored"); text("Закрыть")
                 assertPayload(payload)
-                for ((kind, invalidJson) in listOf("invalid" to "{invalid json", "schema" to json.replace("\"schemaVersion\":1", "\"schemaVersion\":2"))) {
+                for ((kind, invalidJson) in listOf("invalid" to "{invalid json", "schema" to json.replace("\"schemaVersion\":2", "\"schemaVersion\":99"))) {
                     val invalidName = "$kind-${themeName}-$stamp.json"
                     ownedDocuments += createDocument(invalidName, invalidJson)
                     selectRestore(invalidName); text("Заменить данные")

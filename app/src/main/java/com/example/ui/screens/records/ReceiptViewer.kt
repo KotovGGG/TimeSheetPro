@@ -1,5 +1,7 @@
 package com.example.ui.screens.records
 
+import com.example.R
+import com.example.appText
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -57,27 +59,27 @@ internal fun ReceiptViewer(uri: String, onDismiss: () -> Unit) {
         }
         Surface(Modifier.fillMaxSize().testTag("receipt_viewer"), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.systemBarsPadding().padding(AppSpacing.lg)) {
-                AppSheetHeader("Чек оплаты · ${(scale * 100).toInt()}%", onDismiss)
+                AppSheetHeader(appText(R.string.copy_payment_receipt_1, (scale * 100).toInt()), onDismiss)
                 Box(Modifier.weight(1f).fillMaxWidth().testTag("receipt_viewport").clipToBounds().onSizeChanged { viewport = it }
                     .transformable(transform), contentAlignment = Alignment.Center) {
                     when (preview) {
-                        is ReceiptPreview.Ready -> Image(preview.bitmap, "Чек целиком", contentScale = ContentScale.Fit,
+                        is ReceiptPreview.Ready -> Image(preview.bitmap, appText(R.string.copy_fit_receipt), contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize().graphicsLayer {
                                 scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y
                             })
                         ReceiptPreview.Loading -> CircularProgressIndicator()
-                        ReceiptPreview.Unavailable -> Text("Не удалось открыть чек", style = MaterialTheme.typography.bodyMedium)
+                        ReceiptPreview.Unavailable -> Text(appText(R.string.copy_could_not_open_the_receipt), style = MaterialTheme.typography.bodyMedium)
                         ReceiptPreview.Empty -> Unit
                     }
                 }
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center,
                     verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                     Row {
-                        AppIconAction("Уменьшить чек", Icons.Default.Remove, { adjustScale(scale / 1.5f) }, enabled = preview is ReceiptPreview.Ready && scale > 1f)
-                        AppIconAction("Увеличить чек", Icons.Default.Add, { adjustScale(scale * 1.5f) }, enabled = preview is ReceiptPreview.Ready && scale < 5f)
+                        AppIconAction(appText(R.string.copy_zoom_out_on_receipt), Icons.Default.Remove, { adjustScale(scale / 1.5f) }, enabled = preview is ReceiptPreview.Ready && scale > 1f)
+                        AppIconAction(appText(R.string.copy_zoom_in_on_receipt), Icons.Default.Add, { adjustScale(scale * 1.5f) }, enabled = preview is ReceiptPreview.Ready && scale < 5f)
                     }
                     AppButton(onClick = { scale = 1f; offset = Offset.Zero }, variant = AppAction.Quiet, enabled = scale > 1f) {
-                        Text("Сбросить масштаб")
+                        Text(appText(R.string.copy_reset_zoom))
                     }
                 }
             }

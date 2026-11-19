@@ -14,7 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(application = TimeSheetApp::class, sdk = [36])
+@Config(application = TimeSheetApp::class, qualifiers = "ru-rRU", sdk = [36])
 class ComposeWorkflowRobolectricTest {
 
     @get:Rule

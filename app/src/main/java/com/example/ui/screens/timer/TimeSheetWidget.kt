@@ -1,5 +1,6 @@
 package com.example.ui.screens.timer
 
+import com.example.appText
 import android.content.Context
 import android.content.Intent
 import android.util.Log
@@ -23,6 +24,10 @@ import androidx.glance.appwidget.action.actionStartService
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.updateAll
 import androidx.glance.appwidget.SizeMode
+import androidx.glance.LocalSize
+import com.example.R
+import com.example.TimeSheetApp
+import kotlinx.coroutines.flow.first
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.layout.*
 import androidx.glance.text.*
@@ -75,9 +80,9 @@ class TimeSheetWidget : GlanceAppWidget() {
             val tick by TimerStateManager.widgetTick.collectAsState()
             
             val statusText = when (liveState.status) {
-                TimerStatus.IDLE -> "Таймер готов"
-                TimerStatus.RUNNING -> "Идёт запись"
-                TimerStatus.PAUSED -> "На паузе"
+                TimerStatus.IDLE -> context.getString(R.string.timer_ready)
+                TimerStatus.RUNNING -> context.getString(R.string.timer_running)
+                TimerStatus.PAUSED -> context.getString(R.string.timer_paused)
             }
 
             // Always calculate elapsed seconds dynamically
@@ -108,6 +113,8 @@ class TimeSheetWidget : GlanceAppWidget() {
         context: Context
     ) {
         val isIdle = status == TimerStatus.IDLE
+        val compact = LocalSize.current.height < 72.dp
+        val showBreak = LocalSize.current.height >= 112.dp
 
         // App-aligned light/dark themes using XML resource-based day/night resolution
         val backgroundColor = DayNightColorProvider(LightColorScheme.surfaceContainer, DarkColorScheme.surfaceContainer)
@@ -116,6 +123,7 @@ class TimeSheetWidget : GlanceAppWidget() {
         val primaryColor = DayNightColorProvider(LightColorScheme.primary, DarkColorScheme.primary)
         val secondaryColor = DayNightColorProvider(LightColorScheme.secondary, DarkColorScheme.secondary)
         val buttonText = DayNightColorProvider(LightColorScheme.onPrimary, DarkColorScheme.onPrimary)
+        val secondaryButtonText = DayNightColorProvider(LightColorScheme.onSecondary, DarkColorScheme.onSecondary)
 
         val accentColor = when (status) {
             TimerStatus.IDLE -> primaryColor
@@ -128,7 +136,7 @@ class TimeSheetWidget : GlanceAppWidget() {
                 .fillMaxSize()
                 .cornerRadius(24.dp)
                 .background(backgroundColor)
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = if (compact) 10.dp else 16.dp, vertical = if (compact) 0.dp else 6.dp)
                 .clickable(actionStartActivity<MainActivity>())
         ) {
             Row(
@@ -140,7 +148,7 @@ class TimeSheetWidget : GlanceAppWidget() {
                     modifier = GlanceModifier.defaultWeight(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (statusText.isNotEmpty()) {
+                    if (!compact && statusText.isNotEmpty()) {
                         Text(
                             text = statusText,
                             style = TextStyle(
@@ -156,11 +164,11 @@ class TimeSheetWidget : GlanceAppWidget() {
                         text = elapsedStr,
                         style = TextStyle(
                             color = textColor,
-                            fontSize = 18.sp,
+                            fontSize = if (compact) 18.sp else 22.sp,
                             fontWeight = FontWeight.Medium
                         )
                     )
-                    if (status != TimerStatus.IDLE) {
+                    if (showBreak && status != TimerStatus.IDLE) {
                         Spacer(modifier = GlanceModifier.height(2.dp))
                         Text(
                             text = pauseStr,
@@ -199,9 +207,9 @@ class TimeSheetWidget : GlanceAppWidget() {
                         ) {
                             Image(
                                 provider = ImageProvider(playPauseIcon),
-                                contentDescription = if (isRunning) "Пауза" else "Старт",
-                                modifier = GlanceModifier.size(18.dp),
-                                colorFilter = ColorFilter.tint(buttonText)
+                                contentDescription = context.getString(if (isRunning) R.string.timer_pause else R.string.timer_resume),
+                                modifier = GlanceModifier.size(20.dp),
+                                colorFilter = ColorFilter.tint(if (isRunning) secondaryButtonText else buttonText)
                             )
                         }
 
@@ -218,9 +226,9 @@ class TimeSheetWidget : GlanceAppWidget() {
                         ) {
                             Image(
                                 provider = ImageProvider(com.example.R.drawable.ic_save),
-                                contentDescription = "Закончить",
-                                modifier = GlanceModifier.size(18.dp),
-                                colorFilter = ColorFilter.tint(buttonText)
+                                contentDescription = appText(R.string.copy_finish_timer),
+                                modifier = GlanceModifier.size(20.dp),
+                                colorFilter = ColorFilter.tint(secondaryButtonText)
                             )
                         }
                     }
@@ -236,7 +244,7 @@ class TimeSheetWidget : GlanceAppWidget() {
                     ) {
                         Image(
                             provider = ImageProvider(com.example.R.drawable.ic_play),
-                            contentDescription = "Запустить",
+                            contentDescription = appText(R.string.copy_start_timer),
                             modifier = GlanceModifier.size(18.dp),
                             colorFilter = ColorFilter.tint(buttonText)
                         )
@@ -269,7 +277,10 @@ class StartTimerAction : ActionCallback {
     ) {
         Log.d("TimeSheetWidget", "StartTimerAction clicked")
         TimerStateManager.initialize(context)
-        TimerStateManager.start()
+        val clients = (context.applicationContext as TimeSheetApp).container.clientRepository.getActiveClients().first()
+        val lastClient = TimerStateManager.getLastSelectedClientId()
+        val client = clients.firstOrNull { it.id == lastClient } ?: clients.firstOrNull()
+        TimerStateManager.start(client?.id)
         
         val serviceIntent = Intent(context, TimerService::class.java).apply {
             action = TimerService.ACTION_START

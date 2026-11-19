@@ -23,8 +23,10 @@ class ClientsViewModel(
     private val timeEntryRepository: TimeEntryRepository
 ) : ViewModel() {
 
-    val unpaidBalancesState: StateFlow<Map<Long, Double>> = timeEntryRepository.getUnpaidBalances()
-        .map { list -> list.associate { it.clientId to it.unpaidAmount } }
+    val unpaidBalancesState: StateFlow<Map<Long, Map<String, Double>>> = timeEntryRepository.getUnpaidBalances()
+        .map { list -> list.groupBy { it.clientId }.mapValues { (_, balances) ->
+            balances.associate { it.currencyCode to it.unpaidAmount }.toSortedMap()
+        } }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -50,7 +52,7 @@ class ClientsViewModel(
         return rateHistoryRepository.getHistoryForClient(clientId)
     }
 
-    fun saveClient(client: Client, oldRate: Double?) {
+    fun saveClient(client: Client, oldRate: Double?, oldCurrency: String? = null) {
         viewModelScope.launch {
             if (client.id == 0L) {
                 // Creation
@@ -60,6 +62,7 @@ class ClientsViewModel(
                         RateHistoryEntry(
                             clientId = clientId,
                             rate = client.defaultHourlyRate,
+                            currencyCode = client.currencyCode ?: settingsState.value.currency,
                             effectiveFrom = client.createdAt
                         )
                     )
@@ -68,11 +71,12 @@ class ClientsViewModel(
                 // Update
                 clientRepository.updateClient(client)
                 // Check if rate changed and update history
-                if (client.defaultHourlyRate != oldRate && client.defaultHourlyRate != null) {
+                if ((client.defaultHourlyRate != oldRate || client.currencyCode != oldCurrency) && client.defaultHourlyRate != null) {
                     rateHistoryRepository.insertEntry(
                         RateHistoryEntry(
                             clientId = client.id,
                             rate = client.defaultHourlyRate,
+                            currencyCode = client.currencyCode ?: settingsState.value.currency,
                             effectiveFrom = System.currentTimeMillis()
                         )
                     )
@@ -88,6 +92,7 @@ class ClientsViewModel(
                 RateHistoryEntry(
                     clientId = null,
                     rate = rate,
+                    currencyCode = settingsState.value.currency,
                     effectiveFrom = System.currentTimeMillis()
                 )
             )

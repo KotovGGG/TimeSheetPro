@@ -1,5 +1,7 @@
 package com.example.ui.screens.clients
 
+import com.example.R
+import com.example.appText
 import com.example.ui.theme.AppButton as Button
 import com.example.ui.theme.AppAction
 import com.example.ui.theme.AppSpacing
@@ -44,6 +46,8 @@ import com.example.data.local.entity.Client
 import com.example.data.local.entity.RateHistoryEntry
 import com.example.ui.AppViewModelProvider
 import com.example.ui.screens.timer.formatCurrency
+import com.example.ui.screens.timer.formatCurrencyTotals
+import com.example.data.local.entity.billingCurrencies
 import com.example.ui.screens.timer.safeParseColor
 import com.example.ui.theme.LedgerStyles
 import java.text.SimpleDateFormat
@@ -129,7 +133,7 @@ fun ClientsScreen(
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "Добавить заказчика",
+                    contentDescription = appText(R.string.copy_add_client),
                     modifier = Modifier.size(AppSpacing.xxl)
                 )
             }
@@ -156,7 +160,7 @@ fun ClientsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Заказчики",
+                        text = appText(R.string.copy_clients),
                         style = MaterialTheme.typography.headlineMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground
@@ -187,7 +191,7 @@ fun ClientsScreen(
                                 modifier = Modifier.size(48.dp)
                             )
                             Text(
-                                text = "Нет добавленных заказчиков",
+                                text = appText(R.string.copy_no_clients_yet),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -196,12 +200,12 @@ fun ClientsScreen(
                 }
             } else {
                 items(activeClients, key = { it.id }) { client ->
-                    val unpaidAmount = unpaidBalances[client.id] ?: 0.0
+                    val unpaidAmounts = unpaidBalances[client.id].orEmpty()
                     ClientCardItem(
                         client = client,
                         globalHourlyRate = settings.globalHourlyRate,
-                        currency = settings.currency,
-                        unpaidAmount = unpaidAmount,
+                        currency = client.currencyCode ?: settings.currency,
+                        unpaidAmounts = unpaidAmounts,
                         onClick = {
                             editorState = ClientEditorState(
                                 client = client,
@@ -228,8 +232,29 @@ fun ClientsScreen(
 
         var nameInput by rememberSaveable { mutableStateOf(state.name) }
         var rateInput by rememberSaveable { mutableStateOf(state.rate) }
+        var clientCurrency by rememberSaveable { mutableStateOf(state.client?.currencyCode) }
+        var chooseCurrency by rememberSaveable { mutableStateOf(false) }
         val parsedPersonalRate = rateInput.trim().replace(',', '.').toDoubleOrNull()
-        val invalidRate = rateInput.isNotBlank() && (parsedPersonalRate == null || !parsedPersonalRate.isFinite() || parsedPersonalRate < 0.0)
+        val needsPersonalRate = clientCurrency != null && (parsedPersonalRate == null || parsedPersonalRate <= 0.0)
+        val invalidRate = needsPersonalRate || rateInput.isNotBlank() &&
+            (parsedPersonalRate == null || !parsedPersonalRate.isFinite() || parsedPersonalRate < 0.0)
+        if (chooseCurrency) {
+            val inherited = ""
+            com.example.ui.theme.AppChoiceSheet(
+                appText(R.string.copy_client_currency),
+                listOf(inherited to appText(R.string.copy_default_currency_1, settings.currency)) + billingCurrencies.map { it to it },
+                clientCurrency ?: inherited,
+                onSelect = { selection ->
+                    val next = selection.ifEmpty { null }
+                    if ((next ?: settings.currency) != (clientCurrency ?: settings.currency)) {
+                        rateInput = ""
+                    }
+                    clientCurrency = next
+                    chooseCurrency = false
+                },
+                onDismiss = { chooseCurrency = false }
+            )
+        }
         var colorHexInput by rememberSaveable { mutableStateOf(state.colorHex) }
         var isHistoryExpanded by rememberSaveable { mutableStateOf(false) }
         var showColorPicker by rememberSaveable { mutableStateOf(false) }
@@ -252,7 +277,7 @@ fun ClientsScreen(
             ) {
                 // Header with Title
                 Text(
-                    text = if (isEditMode) "Редактировать заказчика" else "Добавить заказчика",
+                    text = if (isEditMode) appText(R.string.copy_edit_client) else appText(R.string.copy_add_client),
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.fillMaxWidth()
@@ -262,8 +287,8 @@ fun ClientsScreen(
                 OutlinedTextField(
                     value = nameInput,
                     onValueChange = { nameInput = it },
-                    label = { Text("Имя или название") },
-                    placeholder = { Text("Например, Студия Север") },
+                    label = { Text(appText(R.string.copy_name)) },
+                    placeholder = { Text(appText(R.string.copy_for_example_north_studio)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .keepFocusedFieldVisible()
@@ -272,12 +297,18 @@ fun ClientsScreen(
                     singleLine = true
                 )
 
+                com.example.ui.theme.AppSettingsRow(
+                    appText(R.string.copy_client_currency),
+                    clientCurrency ?: appText(R.string.copy_default_currency_1, settings.currency),
+                    onClick = { chooseCurrency = true }
+                )
+
                 // Personal Rate Field
                 OutlinedTextField(
                     value = rateInput,
                     onValueChange = { rateInput = it },
-                    label = { Text("Ставка в час") },
-                    placeholder = { Text("Напр., 75.00") },
+                    label = { Text(appText(R.string.copy_hourly_rate_1, clientCurrency ?: settings.currency)) },
+                    placeholder = { Text(appText(R.string.copy_for_example_75_00)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -287,7 +318,12 @@ fun ClientsScreen(
                     singleLine = true,
                     isError = invalidRate,
                     supportingText = {
-                        Text(if (invalidRate) "Введите число не меньше нуля" else "Пустое поле или 0 — ставка из настроек.")
+                        Text(when {
+                            needsPersonalRate -> appText(R.string.copy_enter_a_rate_in_the_client_s)
+                            invalidRate -> appText(R.string.copy_enter_a_number_greater_than_or_equal)
+                            clientCurrency == null -> appText(R.string.copy_leave_blank_or_enter_0_to_use)
+                            else -> appText(R.string.copy_rate_in_the_selected_currency)
+                        })
                     }
                 )
 
@@ -295,13 +331,13 @@ fun ClientsScreen(
                     modifier = Modifier.testTag("client_color_picker")) {
                     Box(Modifier.size(AppSize.smallIcon).clip(CircleShape).background(safeParseColor(colorHexInput)))
                     Spacer(Modifier.width(AppSpacing.sm))
-                    Text("Цвет заказчика")
+                    Text(appText(R.string.copy_client_color))
                 }
                 if (showColorPicker) {
-                    val names = listOf("Красный", "Коралловый", "Терракотовый", "Оранжевый", "Янтарный", "Песочный", "Бронзовый", "Золотистый",
-                        "Жёлтый", "Ванильный", "Мятный", "Зелёный", "Тёмно-зелёный", "Бирюзовый", "Изумрудный", "Светло-бирюзовый",
-                        "Небесный", "Голубой", "Сине-бирюзовый", "Морской", "Лазурный", "Синий", "Фиолетовый", "Аметистовый",
-                        "Орхидея", "Лавандовый", "Серо-фиолетовый", "Пыльная роза", "Светлая роза", "Розовый", "Маджента", "Малиновый")
+                    val names = listOf(appText(R.string.copy_red), appText(R.string.copy_coral), appText(R.string.copy_terracotta), appText(R.string.copy_orange), appText(R.string.copy_amber), appText(R.string.copy_sand), appText(R.string.copy_bronze), appText(R.string.copy_gold),
+                        appText(R.string.copy_yellow), appText(R.string.copy_vanilla), appText(R.string.copy_mint), appText(R.string.copy_green), appText(R.string.copy_forest_green), appText(R.string.copy_turquoise), appText(R.string.copy_emerald), appText(R.string.copy_pale_turquoise),
+                        appText(R.string.copy_sky_blue), appText(R.string.copy_light_blue), appText(R.string.copy_blue_teal), appText(R.string.copy_ocean_blue), appText(R.string.copy_azure), appText(R.string.copy_blue), appText(R.string.copy_violet), appText(R.string.copy_amethyst),
+                        appText(R.string.copy_orchid), appText(R.string.copy_lavender), appText(R.string.copy_muted_purple), appText(R.string.copy_dusty_rose), appText(R.string.copy_pale_rose), appText(R.string.copy_pink), appText(R.string.copy_magenta), appText(R.string.copy_raspberry))
                     com.example.ui.theme.AppColorPickerSheet(colorPresets.zip(names), colorHexInput,
                         onSelect = { colorHexInput = it; showColorPicker = false }, onDismiss = { showColorPicker = false })
                 }
@@ -317,7 +353,7 @@ fun ClientsScreen(
                     Button(
                         onClick = {
                             if (isTimerActiveForClient) {
-                                Toast.makeText(context, "Нельзя удалить заказчика с активным таймером!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, appText(R.string.copy_stop_the_client_s_timer_before_deleting), Toast.LENGTH_SHORT).show()
                             } else {
                                 showDeleteConfirmDialogForClient = client
                             }
@@ -328,7 +364,7 @@ fun ClientsScreen(
                             .testTag("dialog_delete_button"),
                         variant = AppAction.DestructiveQuiet
                     ) {
-                        Text("Удалить заказчика", fontWeight = FontWeight.Bold)
+                        Text(appText(R.string.copy_delete_client), fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -340,7 +376,7 @@ fun ClientsScreen(
                             .heightIn(min = AppSize.touchTarget),
                         variant = AppAction.Quiet
                     ) {
-                        Text("Отмена")
+                        Text(appText(R.string.copy_cancel))
                     }
 
                     Button(
@@ -350,15 +386,17 @@ fun ClientsScreen(
                                 val clientToSave = state.client?.copy(
                                     name = nameInput,
                                     colorHex = colorHexInput,
+                                    currencyCode = clientCurrency,
                                     defaultHourlyRate = parsedRate
                                 ) ?: Client(
                                     name = nameInput,
                                     colorHex = colorHexInput,
+                                    currencyCode = clientCurrency,
                                     defaultHourlyRate = parsedRate,
                                     isArchived = false
                                 )
                                 
-                                viewModel.saveClient(clientToSave, state.client?.defaultHourlyRate)
+                                viewModel.saveClient(clientToSave, state.client?.defaultHourlyRate, state.client?.currencyCode)
                                 editorState = null
                             }
                         },
@@ -368,7 +406,7 @@ fun ClientsScreen(
                             .heightIn(min = AppSize.touchTarget)
                             .testTag("dialog_confirm_button")
                     ) {
-                        Text("Сохранить", fontWeight = FontWeight.Bold)
+                        Text(appText(R.string.copy_save), fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -379,9 +417,9 @@ fun ClientsScreen(
     showDeleteConfirmDialogForClient?.let { client ->
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialogForClient = null },
-            title = { Text("Удалить заказчика?") },
+            title = { Text(appText(R.string.copy_delete_this_client)) },
             text = {
-                Text("Заказчик «${client.name}» будет удалён без возможности восстановления. Записи, отчёты и история ставок сохранятся.")
+                Text(appText(R.string.copy_permanently_delete_1_their_records_reports_and, client.name))
             },
             confirmButton = {
                 Button(
@@ -392,7 +430,7 @@ fun ClientsScreen(
                     },
                     variant = AppAction.Destructive
                 ) {
-                    Text("Удалить")
+                    Text(appText(R.string.copy_delete))
                 }
             },
             dismissButton = {
@@ -400,7 +438,7 @@ fun ClientsScreen(
                     onClick = { showDeleteConfirmDialogForClient = null },
                     variant = AppAction.Quiet
                 ) {
-                    Text("Отмена")
+                    Text(appText(R.string.copy_cancel))
                 }
             },
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -414,7 +452,7 @@ fun ClientCardItem(
     client: Client,
     globalHourlyRate: Double,
     currency: String,
-    unpaidAmount: Double = 0.0,
+    unpaidAmounts: Map<String, Double> = emptyMap(),
     onClick: () -> Unit
 ) {
     Card(
@@ -431,16 +469,16 @@ fun ClientCardItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(IntrinsicSize.Min)
+                .heightIn(min = AppSize.touchTarget)
                 .padding(AppSpacing.lg),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(AppSpacing.md)
         ) {
-            // Accent left border
+            // Align the color marker with the title; the text may grow independently.
             Box(
                 modifier = Modifier
-                    .width(AppSpacing.xs)
-                    .fillMaxHeight()
+                    .padding(top = AppSpacing.xs)
+                    .size(12.dp)
                     .clip(CircleShape)
                     .background(safeParseColor(client.colorHex))
             )
@@ -456,19 +494,19 @@ fun ClientCardItem(
                     
                     Text(
                         text = if (client.defaultHourlyRate != null && client.defaultHourlyRate > 0.0) {
-                            formatCurrency(client.defaultHourlyRate, currency) + " / ч"
+                            formatCurrency(client.defaultHourlyRate, currency) + appText(R.string.copy_hr)
                         } else {
-                            formatCurrency(globalHourlyRate, currency) + " / ч"
+                            formatCurrency(globalHourlyRate, currency) + appText(R.string.copy_hr)
                         },
-                        style = LedgerStyles.MonospaceNumberSmall,
+                        style = LedgerStyles.NumberSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp)
                     )
-                    if (unpaidAmount > 0.0) {
-                        Text("К оплате\n${formatCurrency(unpaidAmount, currency)}",
-                            style = LedgerStyles.MonospaceNumberSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = AppSpacing.xs)
+                    if (unpaidAmounts.values.any { it > 0.0 }) {
+                        Text(appText(R.string.copy_amount_due_n_1, formatCurrencyTotals(unpaidAmounts)),
+                            style = LedgerStyles.NumberSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = AppSpacing.sm)
                                 .testTag("unpaid_balance_${client.id}"))
                     }
                 }

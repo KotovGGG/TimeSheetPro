@@ -106,6 +106,42 @@ class TimerStateManagerTest {
     }
 
     @Test
+    fun notificationSaveFreezesTheMatchingSessionAndKeepsItOnFailure() {
+        TimerStateManager.start(42L)
+        val start = TimerStateManager.timerState.value.sessionStartTime
+        assertNull(TimerStateManager.beginNotificationSave(start + 1))
+        val pending = checkNotNull(TimerStateManager.beginNotificationSave(start))
+        try {
+            assertEquals(TimerStatus.PAUSED, pending.status)
+            assertEquals(42L, pending.clientId)
+            assertNull(TimerStateManager.beginNotificationSave(start))
+            TimerStateManager.resume()
+            TimerStateManager.stopAndPending()
+            assertEquals(pending, TimerStateManager.timerState.value)
+        } finally {
+            TimerStateManager.endNotificationSave(saved = false)
+        }
+        assertEquals(pending, TimerStateManager.timerState.value)
+        assertNotNull(TimerStateManager.beginNotificationSave(start))
+        TimerStateManager.endNotificationSave(saved = true)
+        assertEquals(TimerStatus.IDLE, TimerStateManager.timerState.value.status)
+        assertNull(TimerStateManager.beginNotificationSave(start))
+    }
+
+    @Test
+    fun savedNotificationEntryRemainsUntilTheMatchingRecordIsShown() {
+        TimerStateManager.showSavedNotificationEntry(27L)
+        TimerStateManager.showSavedNotificationEntry(28L)
+        TimerStateManager.stop()
+        TimerStateManager.acknowledgeSavedNotificationEntry(27L)
+
+        assertEquals(28L, TimerStateManager.savedNotificationEntry.value)
+
+        TimerStateManager.acknowledgeSavedNotificationEntry(28L)
+        assertNull(TimerStateManager.savedNotificationEntry.value)
+    }
+
+    @Test
     fun confirmDialogAndWidgetTickFlags() {
         TimerStateManager.setShowConfirmDialog(true)
         assertTrue(TimerStateManager.showConfirmDialog.value)
